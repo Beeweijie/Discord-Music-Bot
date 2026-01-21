@@ -3,7 +3,6 @@ from discord.ext import commands
 import os
 import yt_dlp
 from openai import OpenAI
-from bot.chat import handle_chat  # 导入聊天模块
 import re
 import json
 from bot.path import EMOJI_JSON
@@ -23,6 +22,7 @@ intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 intents.voice_states = True
+intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -35,6 +35,7 @@ with open(EMOJI_JSON, "r", encoding="utf-8") as f:
 async def on_ready():
     # ✅ 先加载所有扩展，确保命令注册
     await bot.load_extension("bot.music")
+    await bot.load_extension("bot.welcome")
 
 
     if not hasattr(bot, 'synced'):
@@ -56,7 +57,16 @@ async def a(ctx):
 
 @bot.event
 async def on_message(message):
-    await handle_chat(message, bot, sunny_id, ds_client)
+    print("====== MESSAGE ======")
+    for attr in dir(message):
+        if not attr.startswith("_"):
+            try:
+                value = getattr(message, attr)
+                print(f"{attr}: {value}")
+            except:
+                pass
+    print("=====================")
+
     await bot.process_commands(message)
 
 
@@ -67,9 +77,9 @@ async def emoji(ctx):
 
 
 @bot.hybrid_command(description="停止播放")
-async def add(ctx, b: int, c: int):
+async def add(ctx, a: int, b: int):
     """加法"""
-    await ctx.send(b+c)
+    await ctx.send(a+b)
 
 def main():
     bot.run(DISCORD_TOKEN)
