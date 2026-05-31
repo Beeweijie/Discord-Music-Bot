@@ -1,10 +1,19 @@
+"""交互式添加 Discord 自定义表情。
+
+运行脚本后，输入 Discord 表情格式 `<:name:id>`，脚本会写入 config/emoji.json。
+输入 stop / exit / quit 可以退出。
+"""
+
 import json
-import re
 import os
+import re
+
 
 FILE_PATH = "../config/emoji.json"
 
-# 读取原有表情
+
+# ===== 读取现有表情配置 =====
+
 if os.path.exists(FILE_PATH):
     with open(FILE_PATH, "r", encoding="utf-8") as f:
         try:
@@ -13,6 +22,9 @@ if os.path.exists(FILE_PATH):
             emojis = {}
 else:
     emojis = {}
+
+
+# ===== 命令行交互 =====
 
 print("💬 输入表情（格式：<:name:id>），输入 'stop' 退出")
 
@@ -23,7 +35,7 @@ while True:
         print("👋 已退出添加")
         break
 
-    match = re.match(r'<:(\w+):(\d+)>', user_input)
+    match = re.match(r"<:(\w+):(\d+)>", user_input)
     if match:
         name, emoji_id = match.groups()
         emojis[name] = f"<:{name}:{emoji_id}>"
