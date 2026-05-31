@@ -6,21 +6,115 @@ A Discord music bot built with `discord.py`. It supports local MP3 files, YouTub
 
 ```text
 Discord-Music-Bot/
-├─ main.py                 # Bot entry point: loads extensions, syncs commands, starts the bot
-├─ bot/
-│  ├─ music.py             # Music playback, queue, download, search, and pre-download logic
-│  ├─ welcome.py           # New member welcome events
-│  └─ path.py              # Shared project path constants
-├─ config/
-│  ├─ emoji.json           # Emoji configuration
-│  └─ music.json           # Reserved music configuration
-├─ scripts/
-│  ├─ emoji_create.py      # CLI helper for adding custom emoji
-│  └─ start_bot.bat        # Windows startup script
-└─ assets/
-   └─ music/
-      ├─ test.mp3          # Local music example
-      └─ cache/            # Download cache for remote audio
+|-- main.py                 # Bot entry point: loads extensions, syncs commands, starts the bot
+|-- requirements.txt        # Python dependencies
+|-- .env.example            # Example environment file
+|-- bot/
+|   |-- music.py            # Music playback, queue, download, search, and pre-download logic
+|   |-- welcome.py          # New member welcome events
+|   `-- path.py             # Shared project path constants
+|-- config/
+|   |-- emoji.json          # Emoji configuration
+|   `-- music.json          # Reserved music configuration
+|-- scripts/
+|   |-- setup_windows.bat   # One-click Windows setup wrapper
+|   |-- setup_windows.ps1   # Installs Python/FFmpeg/dependencies
+|   |-- start_bot.bat       # Starts the bot and writes logs
+|   |-- install_startup.ps1 # Enables Windows login auto-start
+|   `-- uninstall_startup.ps1
+`-- assets/
+    `-- music/
+        |-- test.mp3        # Local music example
+        `-- cache/          # Download cache for remote audio
+```
+
+## Configuration
+
+Create a `.env` file in the project root. You can copy `.env.example`:
+
+```env
+DISCORD_TOKEN=your_discord_bot_token_here
+```
+
+Required Discord Developer Portal settings:
+
+- Enable the bot token in the Bot page.
+- Enable `MESSAGE CONTENT INTENT` if you want `!` prefix commands.
+- Invite the bot with both scopes: `bot` and `applications.commands`.
+- The current code syncs slash commands to the guild ID configured in `main.py`.
+
+FFmpeg is required for voice playback. On Windows, the current code first expects:
+
+```text
+C:/Program Files/ffmpeg/bin/ffmpeg.exe
+```
+
+If your FFmpeg is elsewhere, update `self.ffmpeg_path` in `bot/music.py`.
+
+## One-Click Windows Setup
+
+Run this from the project root:
+
+```powershell
+scripts\setup_windows.bat
+```
+
+The setup script will:
+
+- Try to install Python 3.14 with `winget`.
+- Fall back to Python 3.13 if Python 3.14 is unavailable.
+- Try to install FFmpeg with `winget`.
+- Create a `.venv` virtual environment.
+- Install all Python dependencies from `requirements.txt`.
+- Create `.env` from `.env.example` if `.env` does not exist.
+
+To also enable Windows login auto-start during setup:
+
+```powershell
+scripts\setup_windows.bat -InstallStartup
+```
+
+If `winget` is unavailable, install Python and FFmpeg manually, then rerun the setup script.
+
+## Manual Install
+
+```bash
+python -m venv .venv
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+Then edit `.env` and start the bot:
+
+```bash
+scripts\start_bot.bat
+```
+
+## Windows Auto Start
+
+To start the bot automatically when you log in to Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_startup.ps1
+```
+
+To disable auto-start:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\uninstall_startup.ps1
+```
+
+The startup shortcut points to:
+
+```text
+scripts/start_bot.bat
+```
+
+Logs are written to:
+
+```text
+logs/startup.log
+logs/bot.log
 ```
 
 ## Music Commands
@@ -55,37 +149,10 @@ Examples:
 !play daoxiang jay chou
 ```
 
-## Run Locally
+## Queue and Playlist Limits
 
-1. Add your Discord bot token to `.env`:
-
-```env
-DISCORD_TOKEN=your_token_here
-```
-
-2. Install FFmpeg. On Windows, the current code expects:
-
-```text
-C:/Program Files/ffmpeg/bin/ffmpeg.exe
-```
-
-3. Start the bot:
-
-```bash
-python main.py
-```
-
-## Windows Auto Start
-
-The script below can be linked from the Windows Startup folder to start the bot when you log in:
-
-```text
-scripts/start_bot.bat
-```
-
-Logs are written to:
-
-```text
-logs/startup.log
-logs/bot.log
-```
+- The maximum pending queue size is `200` tracks per voice channel.
+- A playlist/collection is de-duplicated before being added.
+- If a playlist has more than `100` unique tracks, the bot randomly selects `100` of them.
+- The bot pre-downloads up to `3` upcoming remote tracks.
+- Remote audio is stored in `assets/music/cache/`, and old cache files are deleted when the bot starts.

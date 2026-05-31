@@ -26,6 +26,9 @@ from bot.path import MUSIC_DIR
 server_id = 1298956383819010090
 guild_object = discord.Object(id=server_id)
 DEFAULT_VOLUME = 10
+MAX_QUEUE_SIZE = 200
+MAX_PLAYLIST_SONGS = 100
+PREDOWNLOAD_COUNT = 3
 
 
 # ===== URL 判断工具 =====
@@ -106,6 +109,7 @@ class Music(commands.Cog):
 
         self.cache_dir = Path(MUSIC_DIR) / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cleanup_cache_dir()
 
         if os.name == "nt":
             self.ffmpeg_path = "C:/Program Files/ffmpeg/bin/ffmpeg.exe"
@@ -193,6 +197,30 @@ class Music(commands.Cog):
                 file_path.unlink()
         except Exception as e:
             print(f"删除缓存文件失败: {file_path} | {e}")
+
+    def _cleanup_cache_dir(self):
+        """Bot 启动时清空远程音频缓存，避免缓存文件无限增长。"""
+        for file_path in self.cache_dir.iterdir():
+            if file_path.is_file():
+                self._delete_file_safely(file_path)
+
+    def _song_key(self, song: Song) -> str:
+        """生成歌曲去重 key，优先用输入链接，其次用标题。"""
+        return (song.input or song.title).strip().lower()
+
+    def _dedupe_songs(self, songs: List[Song]) -> List[Song]:
+        """按链接/输入去重，保留第一次出现的歌曲。"""
+        seen = set()
+        unique_songs = []
+
+        for song in songs:
+            key = self._song_key(song)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique_songs.append(song)
+
+        return unique_songs
 
     # ===== yt-dlp 解析与下载 =====
 
@@ -527,12 +555,12 @@ class Music(commands.Cog):
     # ===== 预下载与播放 =====
 
     async def _predownload_next_two(self, channel_id: int):
-        """后台预下载队列前两首远程歌曲，减少下一首等待时间。"""
+        """后台预下载队列前几首远程歌曲，减少下一首等待时间。"""
         session = self.sessions.get(channel_id)
         if not session:
             return
 
-        targets = session.queue[:2]
+        targets = session.queue[:PREDOWNLOAD_COUNT]
 
         for song in targets:
             if not song.is_url:
@@ -670,6 +698,10 @@ class Music(commands.Cog):
         session = self._get_session(channel.id)
         session.last_text_channel_id = ctx.channel.id
 
+        if len(session.queue) >= MAX_QUEUE_SIZE:
+            await ctx.send(f"队列已经满了喵~ 当前上限是 {MAX_QUEUE_SIZE} 首")
+            return
+
         if is_bilibili_url(input):
             await ctx.send("📺 检测到 Bilibili 链接，正在尝试解析音频喵~")
         elif is_youtube_url(input):
@@ -743,10 +775,43 @@ class Music(commands.Cog):
                 await ctx.send("❌ 没有提取到任何歌曲喵~")
                 return
 
-            random.shuffle(songs)
+            original_count = len(songs)
+            songs = self._dedupe_songs(songs)
+
+            existing_keys = {self._song_key(song) for song in session.queue}
+            if session.current_song:
+                existing_keys.add(self._song_key(session.current_song))
+            songs = [song for song in songs if self._song_key(song) not in existing_keys]
+
+            deduped_count = len(songs)
+            if len(songs) > MAX_PLAYLIST_SONGS:
+                songs = random.sample(songs, MAX_PLAYLIST_SONGS)
+            else:
+                random.shuffle(songs)
+
+            remaining_slots = MAX_QUEUE_SIZE - len(session.queue)
+            if remaining_slots <= 0:
+                await ctx.send(f"队列已经满了喵~ 当前上限是 {MAX_QUEUE_SIZE} 首")
+                return
+
+            limited_by_queue = len(songs) > remaining_slots
+            songs = songs[:remaining_slots]
+
+            if not songs:
+                await ctx.send("这些歌曲已经都在队列里了喵~")
+                return
+
             session.queue.extend(songs)
 
-            await ctx.send(f"✅ 已加入 **{len(songs)}** 首歌曲，并已随机打乱顺序喵~")
+            note = f"✅ 已加入 **{len(songs)}** 首歌曲，并已随机打乱顺序喵~"
+            if original_count != deduped_count:
+                note += f"\n已自动剔除重复歌曲：{original_count - deduped_count} 首"
+            if deduped_count > MAX_PLAYLIST_SONGS:
+                note += f"\n列表超过 {MAX_PLAYLIST_SONGS} 首，已随机选择其中 {MAX_PLAYLIST_SONGS} 首"
+            if limited_by_queue:
+                note += f"\n队列上限是 {MAX_QUEUE_SIZE} 首，只加入剩余可用位置"
+
+            await ctx.send(note)
 
             self._start_predownload_task(channel.id)
 
