@@ -1,65 +1,91 @@
-# Discord-Music-Bot
+# Discord Music Bot
 
-一个基于 `discord.py` 的 Discord 音乐 Bot，支持本地 mp3、YouTube/Bilibili 链接、YouTube 搜索、播放列表/合集、队列管理和新成员欢迎消息。
+A Discord music bot built with `discord.py`. It supports local MP3 files, YouTube/Bilibili links, YouTube search, playlists/collections, queue controls, and member welcome messages.
 
-## 项目结构
+## Project Structure
 
 ```text
 Discord-Music-Bot/
-├─ main.py                 # Bot 启动入口：加载扩展、同步命令、启动服务
+├─ main.py                 # Bot entry point: loads extensions, syncs commands, starts the bot
 ├─ bot/
-│  ├─ music.py             # 音乐播放、队列、下载、搜索、预下载逻辑
-│  ├─ welcome.py           # 新成员欢迎事件
-│  └─ path.py              # 项目路径常量
+│  ├─ music.py             # Music playback, queue, download, search, and pre-download logic
+│  ├─ welcome.py           # New member welcome events
+│  └─ path.py              # Shared project path constants
 ├─ config/
-│  ├─ emoji.json           # 表情配置
-│  └─ music.json           # 预留音乐配置
+│  ├─ emoji.json           # Emoji configuration
+│  └─ music.json           # Reserved music configuration
 ├─ scripts/
-│  └─ emoji_create.py      # 命令行添加自定义表情
+│  ├─ emoji_create.py      # CLI helper for adding custom emoji
+│  └─ start_bot.bat        # Windows startup script
 └─ assets/
    └─ music/
-      ├─ test.mp3          # 本地音乐示例
-      └─ cache/            # 远程音频下载缓存
+      ├─ test.mp3          # Local music example
+      └─ cache/            # Download cache for remote audio
 ```
 
-## 音乐命令
+## Music Commands
 
-音乐命令同时支持 slash commands 和 `!` 前缀命令：
+Music commands support both slash commands and `!` prefix commands:
 
-- `/join` 或 `!join`：让 Bot 加入你所在的语音频道。
-- `/play <input>` 或 `!play <input>`：播放单曲链接、本地 mp3，或搜索关键词。
-- `/play_list <url>` 或 `!play_list <url>`：添加播放列表/合集并随机打乱。
-- `/queue` 或 `!queue`：查看当前播放队列。
-- `/pause` 或 `!pause`：暂停当前歌曲。
-- `/resume` 或 `!resume`：继续播放当前歌曲。
-- `/now` 或 `!now`：查看当前正在播放的歌曲。
-- `/remove <index>` 或 `!remove <index>`：从队列移除指定编号的歌曲。
-- `/volume <0-100>` 或 `!volume <0-100>`：设置当前语音频道的播放音量。
-- `/shuffle` 或 `!shuffle`：打乱当前播放队列。
-- `/skip` 或 `!skip`：跳过当前歌曲。
-- `/stop` 或 `!stop`：停止播放、清空队列并离开语音频道。
+- `/join` or `!join`: Join your current voice channel.
+- `/play <input>` or `!play <input>`: Play a direct link, local MP3, or search keyword.
+- `/play_list <url>` or `!play_list <url>`: Add a playlist/collection and shuffle it.
+- `/queue` or `!queue`: Show the current queue.
+- `/pause` or `!pause`: Pause the current track.
+- `/resume` or `!resume`: Resume the current track.
+- `/now` or `!now`: Show the currently playing track.
+- `/remove <index>` or `!remove <index>`: Remove a queued track by index.
+- `/volume <0-100>` or `!volume <0-100>`: Set the playback volume for the current voice session.
+- `/shuffle` or `!shuffle`: Shuffle the current queue.
+- `/skip` or `!skip`: Skip the current track.
+- `/stop` or `!stop`: Stop playback, clear the queue, and leave the voice channel.
 
-`/play` 的输入规则：
+## `/play` Input Rules
 
-- 如果是 `http://` 或 `https://` 链接，就直接解析链接。
-- 如果不是链接，并且 `assets/music/输入.mp3` 存在，就播放本地文件。
-- 如果不是链接，并且本地文件不存在，就用 YouTube 搜索第一条结果播放。
-- 使用 `/play` 时，`input` 会自动补全本地 mp3 和 YouTube 搜索候选。
+- If the input starts with `http://` or `https://`, the bot parses it as a direct link.
+- If the input is not a link and `assets/music/<input>.mp3` exists, the bot plays the local file.
+- If the input is not a link and no matching local file exists, the bot searches YouTube and plays the first result.
+- Slash command input autocomplete suggests local MP3 files and YouTube search results.
 
-例子：
+Examples:
 
 ```text
 !play test
 !play https://www.youtube.com/watch?v=...
-!play 稻香 周杰伦
+!play daoxiang jay chou
 ```
 
-## 运行
+## Run Locally
 
-1. 在 `.env` 中配置 `DISCORD_TOKEN`。
-2. 确保已安装 FFmpeg，并且 Windows 下路径为 `C:/Program Files/ffmpeg/bin/ffmpeg.exe`。
-3. 运行：
+1. Add your Discord bot token to `.env`:
+
+```env
+DISCORD_TOKEN=your_token_here
+```
+
+2. Install FFmpeg. On Windows, the current code expects:
+
+```text
+C:/Program Files/ffmpeg/bin/ffmpeg.exe
+```
+
+3. Start the bot:
 
 ```bash
 python main.py
+```
+
+## Windows Auto Start
+
+The script below can be linked from the Windows Startup folder to start the bot when you log in:
+
+```text
+scripts/start_bot.bat
+```
+
+Logs are written to:
+
+```text
+logs/startup.log
+logs/bot.log
 ```
