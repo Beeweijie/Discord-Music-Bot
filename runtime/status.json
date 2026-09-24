@@ -1,0 +1,29 @@
+{
+  "current_song": "What A Wonderful World (Live)",
+  "requester": "8.6分",
+  "queue_size": 59,
+  "volume": 40,
+  "updated_at": "2026-09-24T10:05:05.307626+00:00",
+  "music_sessions": {
+    "1298956383819010090:1530804241978097725": {
+      "guild_id": 1298956383819010090,
+      "guild_name": "慢拔永不坠机",
+      "channel_id": 1530804241978097725,
+      "channel_name": "⑤🐎分🦁",
+      "current_song": "What A Wonderful World (Live)",
+      "requester": "8.6分",
+      "queue_size": 59,
+      "volume": 40,
+      "is_connected": true,
+      "is_playing": true,
+      "is_paused": false,
+      "human_count": 2,
+      "loop_mode": "off"
+    }
+  },
+  "state": "online",
+  "bot_user": "喵酱#0829",
+  "guild_count": 3,
+  "latency_ms": 294,
+  "started_at": "2026-09-24T07:04:56.414792+00:00"
+}

@@ -107,4 +107,4 @@ if ($InstallStartup) {
 
 Write-Host ""
 Write-Host "Setup complete."
-Write-Host "Edit .env, then run: scripts\start_bot.bat"
+Write-Host "Edit .env, then run: scripts\start_tray.bat"

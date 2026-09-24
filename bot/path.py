@@ -14,6 +14,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = BASE_DIR / "config"
 EMOJI_JSON = CONFIG_DIR / "emoji.json"
 MUSIC_JSON = CONFIG_DIR / "music.json"
+VOICE_MODERATION_JSON = CONFIG_DIR / "voice_moderation.json"
 
 
 # assets 静态资源目录

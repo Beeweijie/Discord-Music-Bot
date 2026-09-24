@@ -2,14 +2,8 @@
 setlocal
 
 cd /d "%~dp0.."
-chcp 65001 >nul
-set "PYTHONUTF8=1"
-set "PYTHONIOENCODING=utf-8"
-
-if not exist "logs" mkdir "logs"
 
 set "PYTHON_EXE="
-
 call :try_python ".venv\Scripts\python.exe"
 call :try_python "venv\Scripts\python.exe"
 call :try_command py
@@ -18,12 +12,12 @@ call :try_existing "%LocalAppData%\Programs\Python\Python313\python.exe"
 call :try_existing "%LocalAppData%\Programs\Python\Python312\python.exe"
 
 if not defined PYTHON_EXE (
-  echo [%date% %time%] Python not found. >> "logs\startup.log"
+  echo Python not found.
+  pause
   exit /b 1
 )
 
-echo [%date% %time%] Starting Discord Music Bot with %PYTHON_EXE% >> "logs\startup.log"
-%PYTHON_EXE% main.py >> "logs\bot.log" 2>&1
+%PYTHON_EXE% scripts\tray_app.py
 exit /b %errorlevel%
 
 :try_python

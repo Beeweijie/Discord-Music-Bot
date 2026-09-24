@@ -20,6 +20,10 @@ Discord-Music-Bot/
 |   |-- setup_windows.bat   # One-click Windows setup wrapper
 |   |-- setup_windows.ps1   # Installs Python/FFmpeg/dependencies
 |   |-- start_bot.bat       # Starts the bot and writes logs
+|   |-- start_tray.bat      # Opens the tray controller
+|   |-- open_bot_ui.bat     # Manual entry point for the tray UI
+|   |-- open_bot_ui.py      # Wakes the existing tray UI or starts it
+|   |-- tray_app.py         # System tray UI for bot status/control
 |   |-- install_startup.ps1 # Enables Windows login auto-start
 |   `-- uninstall_startup.ps1
 `-- assets/
@@ -84,19 +88,27 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-Then edit `.env` and start the bot:
+Then edit `.env` and start the tray controller:
 
 ```bash
-scripts\start_bot.bat
+scripts\start_tray.bat
 ```
 
-## Windows Auto Start
+You can also open the UI with:
 
-To start the bot automatically when you log in to Windows:
+```bat
+scripts\open_bot_ui.bat
+```
+
+## Windows Tray And Auto Start
+
+To start the tray controller automatically when you log in to Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install_startup.ps1
 ```
+
+The tray app stays hidden near the Wi-Fi/audio icons, starts the bot in the background, and can show runtime status, recent logs, start, stop, restart, or toggle Windows auto-start.
 
 To disable auto-start:
 
@@ -107,7 +119,7 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall_startup.ps1
 The startup shortcut points to:
 
 ```text
-scripts/start_bot.bat
+scripts/start_tray_hidden.vbs
 ```
 
 Logs are written to:
@@ -115,6 +127,7 @@ Logs are written to:
 ```text
 logs/startup.log
 logs/bot.log
+runtime/status.json
 ```
 
 ## Music Commands
@@ -122,8 +135,7 @@ logs/bot.log
 Music commands support both slash commands and `!` prefix commands:
 
 - `/join` or `!join`: Join your current voice channel.
-- `/play <input>` or `!play <input>`: Play a direct link, local MP3, or search keyword.
-- `/play_list <url>` or `!play_list <url>`: Add a playlist/collection and shuffle it.
+- `/play <input>` or `!play <input>`: Play a direct link, playlist/collection, local MP3, or search keyword.
 - `/queue` or `!queue`: Show the current queue.
 - `/pause` or `!pause`: Pause the current track.
 - `/resume` or `!resume`: Resume the current track.
@@ -137,15 +149,19 @@ Music commands support both slash commands and `!` prefix commands:
 ## `/play` Input Rules
 
 - If the input starts with `http://` or `https://`, the bot parses it as a direct link.
+- YouTube playlists and Bilibili collections can be added directly with `/play`.
+- YouTube radio/mix links such as `watch?v=...&list=RD...&start_radio=1` are normalized to the current video.
 - If the input is not a link and `assets/music/<input>.mp3` exists, the bot plays the local file.
 - If the input is not a link and no matching local file exists, the bot searches YouTube and plays the first result.
 - Slash command input autocomplete suggests local MP3 files and YouTube search results.
+- Playback starts a Now Playing panel with buttons for queue, pause/resume, skip, loop, stop, and replay.
 
 Examples:
 
 ```text
 !play test
 !play https://www.youtube.com/watch?v=...
+!play https://www.youtube.com/playlist?list=...
 !play daoxiang jay chou
 ```
 

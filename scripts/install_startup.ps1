@@ -1,16 +1,18 @@
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Startup = [Environment]::GetFolderPath("Startup")
-$Target = Join-Path $ProjectRoot "scripts\start_bot.bat"
+$Target = Join-Path $env:WINDIR "System32\wscript.exe"
+$HiddenLauncher = Join-Path $ProjectRoot "scripts\start_tray_hidden.vbs"
 $ShortcutPath = Join-Path $Startup "Discord Music Bot.lnk"
 
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = $Target
+$Shortcut.Arguments = "`"$HiddenLauncher`""
 $Shortcut.WorkingDirectory = $ProjectRoot
 $Shortcut.WindowStyle = 7
-$Shortcut.Description = "Start Discord Music Bot on Windows login"
+$Shortcut.Description = "Start Discord Music Bot tray on Windows login"
 $Shortcut.Save()
 
 Write-Host "Startup shortcut created:"

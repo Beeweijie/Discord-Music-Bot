@@ -1,4 +1,6 @@
 discord.py[voice]
 PyNaCl
 python-dotenv
-yt-dlp
+yt-dlp[default]
+pystray
+Pillow
