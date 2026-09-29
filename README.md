@@ -9,9 +9,17 @@
 
 Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), get its token from the **Bot** page, and enable **Server Members Intent** and **Message Content Intent**. Invite it with the `bot` and `applications.commands` scopes and grant View Channels, Send Messages, Embed Links, Connect, and Speak permissions. Polls also require Send Polls. Keep the token in your local `.env`; do not upload or share it.
 
-Before upgrading, exit the old tray app and back up `.env`, `config/guilds/`, and `data/`. Extract the new release into a new folder, copy those files into it, and run `install.bat`. Re-enable startup from the new tray app if needed. Setup preserves an existing `.env`. Release packages exclude credentials, server data, logs, and caches.
+For a manual upgrade, exit the old tray app and back up `.env`, `config/guilds/`, and `data/`. Extract the new release into a new folder, copy those files into it, and run `install.bat`. Re-enable startup from the new tray app if needed. Setup preserves an existing `.env`. Release packages exclude credentials, server data, logs, and caches.
 
 Advanced options: `install.bat -NoConfigure` installs dependencies so you can configure `.env` later; `-InstallStartup` creates a Windows login shortcut. Source checkouts use the same root launchers. The Windows installer supports Python 3.12–3.14.
+
+## Update from Discord
+
+The bot owner can run **`!update`** to install the latest stable GitHub Release and restart automatically. You can also use `!update https://github.com/Beeweijie/Discord-Music-Bot`. The URL must match the trusted repository configured with `UPDATE_GITHUB_URL` in `.env`; the default is this repository. Server administrators who do not own the bot cannot update it.
+
+The bot stays online while it downloads the ZIP, verifies its SHA-256 checksum and manifest, and installs dependencies into a separate environment. It then saves queues, briefly disconnects, replaces application files, and restarts. `.env`, all existing `config/` files, music assets, user data, logs, and the original environment are preserved. Use `/resume` after restarting to continue a saved queue. New code and its environment are restored to the previous version if configuration checks or Discord startup fail.
+
+Run through `start.bat`, the tray, or `python main.py` so the restart supervisor is active. Versions before v1.1.0 require one manual upgrade using the instructions above; after that, use `!update`. Public releases must contain both the Windows ZIP and SHA-256 assets. Private repositories, prereleases and downgrades are not supported. If an update fails, check `logs/update.log` and `runtime/updates/<job-id>/`. Backups are kept there for manual recovery; keep this folder while an update is in progress. Restart the normal launcher to recover an interrupted installation.
 
 Join a voice channel and use `/play` with a song name or URL. Leave the input empty to use your server's default playlist, or resume a saved queue. Use **Add song**, **Pause / Resume**, **Skip**, and **Favorite** on the Discord player. The player displays the original cover image, without a progress bar.
 
@@ -70,6 +78,7 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `help_music` | both | None | Show music command help |
 | `ping` | both | None | Show the bot's Discord latency |
 | `sync` | ! | None | Sync global slash commands; bot owner only |
+| `update` | ! | Optional GitHub repository URL | Install the latest stable release and restart; bot owner only |
 | `a` | ! | None | Alias for `!sync`; bot owner only |
 | `emoji` | ! | None | Show configured emoji |
 | `add` | ! | `a`, `b` | Add two integers |

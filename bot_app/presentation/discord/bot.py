@@ -4,6 +4,8 @@ import json
 import logging
 import math
 import os
+import asyncio
+import time
 from datetime import datetime, timezone
 
 import discord
@@ -32,6 +34,8 @@ def error_message(error: Exception, guild_id=None) -> str:
         return "Missing bot permissions. Check View Channel, Send Messages, Embed Links, Connect and Speak."
     if isinstance(error, (commands.CommandOnCooldown, app_commands.CommandOnCooldown)):
         return f"Please retry in {error.retry_after:.1f} seconds."
+    if isinstance(error, commands.MaxConcurrencyReached):
+        return "This command is already running. Please wait for it to finish."
     if isinstance(error, commands.MissingRequiredArgument):
         return f"Missing argument: {error.param.name}. Use !help for usage."
     if isinstance(error, (commands.UserInputError, app_commands.TransformerError)):
@@ -59,6 +63,11 @@ class MyBot(commands.Bot):
     def __init__(self):
         from bot_app.bootstrap import create_management_service
         self.management = create_management_service()
+        from bot_app.bootstrap import create_update_service
+        self.updates = create_update_service()
+        self.update_requested = False
+        self.update_notice_lock = asyncio.Lock()
+        self.update_notice_retry_at = 0
         intents = discord.Intents.default()
         intents.message_content = env_bool("MESSAGE_CONTENT_ENABLED")
         intents.members = self.management.settings.any_welcome_enabled()
@@ -104,6 +113,8 @@ class MyBot(commands.Bot):
     async def settings_refresh(self):
         try:
             self.apply_saved_settings()
+            if self.is_ready():
+                await self.deliver_update_result()
         except Exception:
             logger.exception("Could not apply saved settings")
 
@@ -125,6 +136,29 @@ class MyBot(commands.Bot):
                      latency_ms=self.latency_ms(), started_at=self.started_at, last_error=None)
         if not self.status_heartbeat.is_running():
             self.status_heartbeat.start()
+        job_id = os.getenv("BOT_UPDATE_ID")
+        if job_id:
+            self.updates.backend.mark_ready(job_id)
+        await self.deliver_update_result()
+
+    async def deliver_update_result(self):
+        from bot_app.infrastructure.updates import read_json
+        async with self.update_notice_lock:
+            if time.monotonic() < self.update_notice_retry_at:
+                return
+            path = self.updates.backend.result
+            result = read_json(path)
+            if not result:
+                return
+            try:
+                channel = self.get_channel(result["channel_id"]) or await self.fetch_channel(result["channel_id"])
+                message = (f"Updated to {result['version']} and restarted successfully. Use /resume to continue a saved queue."
+                           if result["success"] else "Update failed or was interrupted. The previous version was restored. See logs/update.log.")
+                await channel.send(message)
+                path.unlink(missing_ok=True)
+            except discord.HTTPException:
+                self.update_notice_retry_at = time.monotonic() + 60
+                logger.warning("Could not deliver update result; it will be retried")
 
     async def on_disconnect(self):
         if not self.is_closed():
@@ -167,6 +201,34 @@ def create_bot() -> MyBot:
         """Owner only: synchronize global slash commands."""
         synced = await bot.tree.sync()
         await ctx.send(f"Synced {len(synced)} global slash commands.")
+
+    @bot.command(name="update")
+    @commands.is_owner()
+    @commands.cooldown(1, 60, commands.BucketType.user)
+    @commands.max_concurrency(1, per=commands.BucketType.default, wait=False)
+    async def update_bot(ctx, github_url: str = ""):
+        """Owner only: install the latest release from the configured GitHub repository."""
+        from bot_app.domain.updates import UpdateError
+        if os.getenv("BOT_SUPERVISED") != "1":
+            await ctx.send("Start the bot through start.bat or python main.py to enable automatic update restarts.")
+            return
+        await ctx.send("Checking GitHub and preparing the update. The bot stays online while dependencies are installed.")
+        try:
+            ticket = await bot.updates.prepare(github_url)
+            if ticket is None:
+                await ctx.send(f"Already up to date ({bot.updates.backend.current_version()}).")
+                return
+            await ctx.send(f"Verified {ticket['version']}. Saving queues and restarting; this briefly interrupts playback. Local settings and data are preserved.")
+            bot.updates.activate(ticket, ctx.channel.id)
+            bot.update_requested = True
+            await bot.close()
+        except UpdateError as error:
+            await ctx.send(str(error))
+        except Exception:
+            if bot.update_requested:
+                bot.updates.cancel()
+                bot.update_requested = False
+            raise
 
     @bot.command()
     async def emoji(ctx):

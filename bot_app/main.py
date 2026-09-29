@@ -110,8 +110,9 @@ def main(argv=None) -> int:
             logger.error(last_error)
             return 1
         lower_windows_process_priority()
+        bot = create_bot()
         try:
-            asyncio.run(run_bot(create_bot(), os.environ["DISCORD_TOKEN"].strip()))
+            asyncio.run(run_bot(bot, os.environ["DISCORD_TOKEN"].strip()))
         except discord.LoginFailure:
             state, last_error = "error", "Discord 登录失败，请检查 DISCORD_TOKEN。"
         except discord.PrivilegedIntentsRequired:
@@ -123,7 +124,7 @@ def main(argv=None) -> int:
             logger.exception("Bot failed")
         if last_error:
             logger.error(last_error)
-        return 1 if state == "error" else 0
+        return 1 if state == "error" else (75 if getattr(bot, "update_requested", False) else 0)
     finally:
         # Only the process that acquired ownership may erase its runtime state.
         if record and read_process_record(PID_FILE) == record:

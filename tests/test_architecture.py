@@ -28,7 +28,7 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_original_command_names_and_aliases(self):
         prefix = set(self.bot.all_commands)
-        self.assertEqual(prefix, MUSIC_COMMANDS | {"ping", "help", "sync", "a", "emoji", "add", "playlist_defult", "poll", "poll_end"})
+        self.assertEqual(prefix, MUSIC_COMMANDS | {"ping", "help", "sync", "a", "update", "emoji", "add", "playlist_defult", "poll", "poll_end"})
         slash = {command.name for command in self.bot.tree.get_commands()}
         self.assertEqual(slash, MUSIC_COMMANDS | {"ping", "poll", "poll_end"})
         self.assertIs(self.bot.get_command("a"), self.bot.get_command("sync"))

@@ -1,5 +1,6 @@
 """Verify that releases contain the application and exclude local state."""
 import importlib.util
+import json
 import tempfile
 import unittest
 import zipfile
@@ -19,6 +20,10 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(first, release.build("v1.0.0", Path(directory)).read_bytes())
             with zipfile.ZipFile(archive) as bundle:
                 names = {name.split("/", 1)[1] for name in bundle.namelist()}
+                metadata = json.loads(bundle.read("Discord-Music-Bot-v1.0.0-windows/version.json"))
+                self.assertEqual(metadata["version"], "v1.0.0")
+                self.assertEqual(metadata["update_schema"], 1)
+                self.assertEqual(set(metadata["files"]), names)
                 for required in ("install.bat", "start.bat", ".env.example", "main.py",
                                  "bot_app/presentation/api/web/index.html", "scripts/setup_windows.ps1"):
                     self.assertIn(required, names)

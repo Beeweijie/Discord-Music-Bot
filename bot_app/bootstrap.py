@@ -10,6 +10,13 @@ def create_desktop_controller():
     return DesktopProcessController()
 
 
+def create_update_service():
+    from bot_app.application.updates import UpdateService
+    from bot_app.infrastructure.updates import GitHubUpdater
+    from bot_app.infrastructure.paths import BASE_DIR
+    return UpdateService(GitHubUpdater(BASE_DIR))
+
+
 def create_welcome_delivery():
     from bot_app.infrastructure.discord.welcome import WelcomeDelivery
     return WelcomeDelivery()

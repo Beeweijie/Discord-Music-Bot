@@ -15,11 +15,14 @@ tokens, runtime PIDs and music assets are not migrated or overwritten.
   internal parts of one `PlaybackService`, not independently running services.
 - `application/welcome`: deduplication, screening and retry policy.
 - `application/management`: shared desktop/HTTP management interface.
+- `application/updates`: serializes update preparation without blocking the bot loop.
 - `application/ports`: storage and transport contracts.
 - `domain`: track values, limits, URL rules and control/configuration validation.
 - `infrastructure`: media extraction, FFmpeg sources, Discord delivery, process
   ownership, paths and atomic file repositories.
 - `bootstrap.py`: dependency composition.
+- `scripts/run_bot.py`: a standard-library supervisor that owns restart and rollback.
+  `main.py` uses it when executed; importing `main.py` retains the original API.
 
 The domain has no dependency on application, infrastructure or Discord. The
 application has no SDK imports or imports of concrete repositories. Music use
