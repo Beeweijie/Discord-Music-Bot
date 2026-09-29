@@ -3,3 +3,14 @@ __pycache__/
 *.py[cod]
 logs/
 assets/music/cache/
+.test-deps/
+.venv/
+runtime/
+
+data/queues/
+data/polls/
+
+data/library/
+config/guilds/
+dist/
+.idea/

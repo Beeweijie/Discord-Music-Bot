@@ -195,3 +195,19 @@ class WelcomeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GuildWelcomeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_guild_welcome_preferences_do_not_leak(self):
+        from bot_app.application.welcome.service import WelcomeService
+        delivery = Mock()
+        delivery.send = AsyncMock(return_value=True)
+        service = WelcomeService(delivery, enabled=True, include_bots=True, channel_id=0, max_remembered=lambda: 100)
+        repository = Mock()
+        repository.read.side_effect = lambda section, guild: {"enabled": guild == 1, "include_bots": False, "channel_id": "11" if guild == 1 else "22"}
+        service.settings_repository = repository
+        for guild_id in (1, 2):
+            member = SimpleNamespace(guild=SimpleNamespace(id=guild_id), id=3, joined_at=None, bot=False)
+            await service._send_welcome(member)
+        delivery.send.assert_awaited_once()
+        self.assertEqual(delivery.pick_channel.call_args.args[1], 11)

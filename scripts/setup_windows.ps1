@@ -1,110 +1,114 @@
 param(
     [switch]$SkipPythonInstall,
     [switch]$SkipFfmpegInstall,
-    [switch]$InstallStartup
+    [switch]$InstallStartup,
+    [switch]$NoConfigure
 )
-
 $ErrorActionPreference = "Stop"
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+Set-Location -LiteralPath $ProjectRoot
 
-$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-Set-Location $ProjectRoot
-
-function Test-Command {
-    param([string]$Name)
-    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+function Refresh-Path {
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+        [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
 }
-
-function Install-WithWinget {
-    param(
-        [string]$PackageId,
-        [string]$Name
-    )
-
-    if (-not (Test-Command "winget")) {
-        Write-Warning "winget is not available. Please install $Name manually."
-        return $false
+function Invoke-Checked {
+    param([string]$Executable, [string[]]$Arguments)
+    & $Executable @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Executable failed (exit code $LASTEXITCODE). Fix the error above and run install.bat again."
     }
-
-    Write-Host "Installing $Name with winget..."
-    winget install --id $PackageId --exact --silent --accept-package-agreements --accept-source-agreements
-    return ($LASTEXITCODE -eq 0)
 }
-
+function Install-WithWinget {
+    param([string]$PackageId, [string]$Name)
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw "Install $Name manually, or install App Installer from Microsoft Store to enable winget, then retry."
+    }
+    Invoke-Checked "winget" @("install", "--id", $PackageId, "--exact", "--silent",
+        "--accept-package-agreements", "--accept-source-agreements")
+    Refresh-Path
+}
 function Find-Python {
     $Candidates = @(
-        ".\.venv\Scripts\python.exe",
-        "$env:LocalAppData\Programs\Python\Python314\python.exe",
+        (Join-Path $ProjectRoot ".venv\Scripts\python.exe"),
         "$env:LocalAppData\Programs\Python\Python313\python.exe",
-        "$env:LocalAppData\Programs\Python\Python312\python.exe"
+        "$env:LocalAppData\Programs\Python\Python312\python.exe",
+        "$env:LocalAppData\Programs\Python\Python314\python.exe"
     )
-
+    foreach ($Command in @("py", "python", "python3")) {
+        $Found = Get-Command $Command -ErrorAction SilentlyContinue
+        if ($Found) { $Candidates += $Found.Source }
+    }
     foreach ($Candidate in $Candidates) {
-        if (Test-Path $Candidate) {
-            return (Resolve-Path $Candidate).Path
-        }
+        if (-not (Test-Path -LiteralPath $Candidate)) { continue }
+        try {
+            & $Candidate -c "import sys, venv; sys.exit(0 if (3, 12) <= sys.version_info[:2] < (3, 15) else 1)" 2>$null
+            if ($LASTEXITCODE -eq 0) { return $Candidate }
+        } catch { }
     }
-
-    if (Test-Command "py") {
-        return "py"
-    }
-
-    if (Test-Command "python") {
-        return "python"
-    }
-
     return $null
 }
-
-if (-not $SkipPythonInstall) {
+function Find-Ffmpeg {
+    $Command = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    $Candidates = @("C:\Program Files\ffmpeg\bin\ffmpeg.exe")
+    if ($Command) { $Candidates = @($Command.Source) + $Candidates }
+    $Packages = Join-Path $env:LocalAppData "Microsoft\WinGet\Packages"
+    if (Test-Path -LiteralPath $Packages) {
+        $Candidates += @(Get-ChildItem -LiteralPath $Packages -Filter ffmpeg.exe -File -Recurse |
+            Select-Object -ExpandProperty FullName)
+    }
+    foreach ($Candidate in $Candidates) {
+        if (-not (Test-Path -LiteralPath $Candidate)) { continue }
+        & $Candidate -version *> $null
+        if ($LASTEXITCODE -eq 0) { return $Candidate }
+    }
+    return $null
+}
+try {
+    Refresh-Path
     $Python = Find-Python
-    if (-not $Python) {
-        $Installed = Install-WithWinget -PackageId "Python.Python.3.14" -Name "Python 3.14"
-        if (-not $Installed) {
-            Write-Warning "Python 3.14 install failed or is unavailable. Trying Python 3.13."
-            Install-WithWinget -PackageId "Python.Python.3.13" -Name "Python 3.13" | Out-Null
-        }
+    if (-not $Python -and -not $SkipPythonInstall) {
+        Install-WithWinget "Python.Python.3.13" "Python 3.13"
+        $Python = Find-Python
     }
-}
-
-if (-not $SkipFfmpegInstall) {
-    if (-not (Test-Command "ffmpeg") -and -not (Test-Path "C:\Program Files\ffmpeg\bin\ffmpeg.exe")) {
-        Install-WithWinget -PackageId "Gyan.FFmpeg" -Name "FFmpeg" | Out-Null
+    if (-not $Python) { throw "Python 3.12-3.14 was not found. Install Python 3.13 and retry." }
+    $Ffmpeg = Find-Ffmpeg
+    if (-not $Ffmpeg -and -not $SkipFfmpegInstall) {
+        Install-WithWinget "Gyan.FFmpeg" "FFmpeg"
+        $Ffmpeg = Find-Ffmpeg
     }
-}
-
-$Python = Find-Python
-if (-not $Python) {
-    throw "Python was not found. Install Python and rerun this script."
-}
-
-if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
-    Write-Host "Creating virtual environment..."
-    if ($Python -eq "py") {
-        py -3 -m venv .venv
+    if (-not $Ffmpeg) { throw "FFmpeg was not found. Install FFmpeg, add it to PATH and retry." }
+    $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    if ($Python -ne $VenvPython) {
+        Write-Host "Creating virtual environment..."
+        Invoke-Checked $Python @("-m", "venv", ".venv")
+    }
+    Invoke-Checked $VenvPython @("-m", "pip", "install", "--upgrade", "pip")
+    Invoke-Checked $VenvPython @("-m", "pip", "install", "-r", "requirements.txt")
+    $EnvFile = Join-Path $ProjectRoot ".env"
+    if (-not (Test-Path -LiteralPath $EnvFile)) {
+        Copy-Item -LiteralPath (Join-Path $ProjectRoot ".env.example") -Destination $EnvFile
+    }
+    # Persist the path for future tray launches; preserve existing credentials.
+    $Text = [IO.File]::ReadAllText($EnvFile)
+    if ($Text -notmatch '(?m)^\s*FFMPEG_PATH\s*=\s*\S+') {
+        $Text = [regex]::Replace($Text, '(?m)^\s*FFMPEG_PATH\s*=.*$', '')
+        $Text = $Text.TrimEnd() + "`r`nFFMPEG_PATH='" + $Ffmpeg.Replace('\', '/') + "'`r`n"
+        [IO.File]::WriteAllText($EnvFile, $Text, (New-Object Text.UTF8Encoding($false)))
+    }
+    if ($NoConfigure) {
+        Write-Host "Dependencies installed. Set DISCORD_TOKEN in .env, then run start.bat."
     } else {
-        & $Python -m venv .venv
+        if ($Text -notmatch '(?m)^\s*DISCORD_TOKEN\s*=\s*(?!your_|replace_)\S+') {
+            Write-Host "Enter your Discord bot token in .env, save, and close Notepad to continue."
+            Start-Process notepad.exe -ArgumentList ('"' + $EnvFile + '"') -Wait
+        }
+        Invoke-Checked $VenvPython @("main.py", "--check")
+        Write-Host "Setup complete. Double-click start.bat to start the tray app."
     }
+    if ($InstallStartup) { & (Join-Path $PSScriptRoot "install_startup.ps1") }
+    exit 0
+} catch {
+    Write-Host "Setup failed: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
 }
-
-$VenvPython = Resolve-Path ".\.venv\Scripts\python.exe"
-Write-Host "Upgrading pip..."
-& $VenvPython -m pip install --upgrade pip
-
-Write-Host "Installing Python dependencies..."
-& $VenvPython -m pip install -r requirements.txt
-
-if (-not (Test-Path ".\.env")) {
-    Copy-Item ".\.env.example" ".\.env" -ErrorAction SilentlyContinue
-    if (-not (Test-Path ".\.env")) {
-        "DISCORD_TOKEN=your_token_here" | Out-File -Encoding utf8 ".\.env"
-    }
-    Write-Warning "Created .env. Edit DISCORD_TOKEN before starting the bot."
-}
-
-if ($InstallStartup) {
-    & (Join-Path $PSScriptRoot "install_startup.ps1")
-}
-
-Write-Host ""
-Write-Host "Setup complete."
-Write-Host "Edit .env, then run: scripts\start_tray.bat"

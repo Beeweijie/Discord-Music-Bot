@@ -1,1 +1,8 @@
-{}
+{
+  "default_volume": 40,
+  "max_queue_size": 500,
+  "max_playlist_songs": 500,
+  "predownload_count": 3,
+  "idle_timeout_seconds": 300,
+  "cache_max_age_seconds": 3600
+}

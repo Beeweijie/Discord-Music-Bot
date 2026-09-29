@@ -4,3 +4,4 @@ python-dotenv
 yt-dlp[default]
 pystray
 Pillow
+aiohttp>=3.9,<4
