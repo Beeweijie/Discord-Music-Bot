@@ -59,7 +59,8 @@ def safe_target(root, name):
 
 
 def download(url, limit):
-    request = Request(url, headers={"User-Agent": "Discord-Music-Bot-Updater", "Accept": "application/vnd.github+json"})
+    accept = "application/vnd.github+json" if url.startswith("https://api.github.com/") else "application/octet-stream"
+    request = Request(url, headers={"User-Agent": "Discord-Music-Bot-Updater", "Accept": accept})
     try:
         with urlopen(request, timeout=30) as response:
             data = response.read(limit + 1)

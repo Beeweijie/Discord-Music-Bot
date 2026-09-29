@@ -39,6 +39,17 @@ def bundle(files=None):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_release_metadata_and_binary_assets_use_the_correct_accept_header(self):
+        for url, expected in (("https://api.github.com/repos/a/b/releases/latest", "application/vnd.github+json"),
+                              ("https://github.com/a/b/releases/download/v1.1.1/release.zip", "application/octet-stream")):
+            response = Mock()
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=False)
+            response.read.return_value = b"data"
+            with patch("bot_app.infrastructure.updates.urlopen", return_value=response) as open_url:
+                self.assertEqual(download(url, 1024), b"data")
+                self.assertEqual(open_url.call_args.args[0].get_header("Accept"), expected)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

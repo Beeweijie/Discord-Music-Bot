@@ -23,7 +23,7 @@ Never publish files by recursively zipping the working directory.
 
 ## Automatic updates
 
-Starting with v1.1.0, the owner-only prefix command `!update [GitHub repository URL]`
+Starting with v1.1.1, the owner-only prefix command `!update [GitHub repository URL]`
 uses GitHub's latest stable release endpoint. The URL must match the locally
 configured `UPDATE_GITHUB_URL`; the default is this project's public repository.
 Both uploaded assets must exist before an update can begin. An incomplete release
@@ -53,5 +53,5 @@ Recovery journals, environments and backups remain in `runtime/updates/<id>/`.
 Do not remove that directory while an update is pending. Details are in
 `logs/update.log`, `prepare.log` and `check.log` within the job folder. Dependency
 installation has a ten-minute timeout. Failed downloads/preparation never stop
-the running bot. Upgrading a release older than v1.1.0 requires a manual install
-once so the supervisor and command are available.
+the running bot. Upgrading a release older than v1.1.1 requires a manual install
+once so the supervisor, command and binary download-header fix are available.
