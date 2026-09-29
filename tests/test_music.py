@@ -435,7 +435,7 @@ class MediaTests(unittest.TestCase):
             root = Path(tmp)
             (root / "test.mp3").write_bytes(b"audio")
             media = MediaSource("ffmpeg", root)
-            self.assertEqual(media._resolve_local_music("test"), root / "test.mp3")
+            self.assertEqual(media._resolve_local_music("test"), (root / "test.mp3").resolve())
             for value in ["../test", "C:/test", "sub/test"]:
                 self.assertIsNone(media._resolve_local_music(value))
             self.assertEqual(media._local_music_choices("test")[0].value, "test")
