@@ -219,7 +219,10 @@ class GitHubUpdater:
     def environment_python(self, name):
         path = self.root / name
         expected = self.directory.resolve()
-        if not path.resolve().is_relative_to(expected) or not path.is_file():
+        # POSIX venv executables normally link to the system Python. Resolve the
+        # containing directory to reject escaping directories, but launch the
+        # executable through its venv path so Python uses that environment.
+        if not path.parent.resolve().is_relative_to(expected) or not path.is_file():
             raise UpdateError("The prepared Python environment is missing or outside the update directory.")
         return path
 

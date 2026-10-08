@@ -55,3 +55,29 @@ Do not remove that directory while an update is pending. Details are in
 installation has a ten-minute timeout. Failed downloads/preparation never stop
 the running bot. Upgrading a release older than v1.1.1 requires a manual install
 once so the supervisor, command and binary download-header fix are available.
+
+## Linux updates failing before code replacement
+
+Versions through v1.2.0 can reject a normal Linux virtual environment with
+`The prepared Python environment is missing or outside the update directory.`
+The executable `environment/bin/python` is normally a symbolic link to system
+Python. The old check resolves that final link and incorrectly treats the system
+interpreter as an escaping update path. v1.2.1 resolves only the containing
+directory, keeps the venv launch path, and still rejects missing executables and
+directories that point outside the update storage.
+
+An affected old updater fails before installing the fix, so retrying `!update`
+alone cannot repair it. Stop the bot's usual launcher/service, then run this
+one-time repair in the existing installation (replace the root path as needed):
+
+```bash
+curl -fL https://raw.githubusercontent.com/Beeweijie/Discord-Music-Bot/v1.2.1/scripts/fix_linux_update.py -o /tmp/fix_linux_update.py
+python3 /tmp/fix_linux_update.py --root /home/hche616/Discord-Music-Bot
+```
+
+The helper refuses a running launcher or an unexpected updater, backs up the
+original source, and changes only the faulty path check. It does not remove update
+environments or edit credentials, settings or saved queues. Restart the same
+launcher/service, then use `!update` to install the fixed release. Use `/resume`
+after a successful upgrade. Future releases must pass real Linux venv/update and
+rollback tests as well as the Windows release suite before assets are published.

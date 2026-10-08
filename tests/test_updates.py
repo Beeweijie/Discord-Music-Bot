@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -20,6 +21,7 @@ from bot_app.domain.updates import UpdateError, public_path, repository
 from bot_app.infrastructure.updates import GitHubUpdater, REQUIRED, atomic_json, extract_release, read_json
 from bot_app.infrastructure.updates import download
 from scripts.run_bot import supervise
+from scripts.fix_linux_update import repair, OLD_CHECK, NEW_CHECK
 
 TAG = "v1.1.0"
 REPO = "Beeweijie/Discord-Music-Bot"
@@ -94,6 +96,52 @@ class UpdateTests(unittest.TestCase):
     def assert_preserved(self):
         for name, value in self.protected.items():
             self.assertEqual((self.root / name).read_bytes(), value, name)
+
+    def test_real_virtual_environment_keeps_its_launch_path_and_prefix(self):
+        environment = self.root / "runtime/updates" / ("a" * 32) / "environment"
+        subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(environment)],
+                       check=True, capture_output=True, timeout=90)
+        python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        name = python.relative_to(self.root).as_posix()
+        self.assertEqual(self.updater.environment_python(name), python)
+        atomic_json(self.updater.active, {"python": name, "version": TAG})
+        self.assertEqual(self.updater.selected_python(sys.executable), str(python))
+        result = subprocess.run([str(python), "-c", "import sys; print(sys.prefix)"],
+                                check=True, capture_output=True, text=True, timeout=10)
+        self.assertEqual(Path(result.stdout.strip()).resolve(), environment.resolve())
+        if os.name != "nt":
+            self.assertTrue(python.is_symlink())
+            self.assertFalse(python.resolve().is_relative_to(self.updater.directory.resolve()))
+
+    def test_missing_and_outside_environment_paths_are_rejected(self):
+        for name in ("runtime/updates/missing/environment/bin/python", "main.py",
+                     str(Path(sys.executable).resolve()), "runtime/updates/../../main.py"):
+            with self.subTest(name=name), self.assertRaises(UpdateError):
+                self.updater.environment_python(name)
+
+    def test_environment_directory_link_cannot_escape_update_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory).resolve()
+            (outside / "python").write_bytes(b"outside-python")
+            parent = self.updater.directory / ("a" * 32) / "environment"
+            parent.mkdir(parents=True)
+            link = parent / "bin"
+            try:
+                link.symlink_to(outside, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"Creating directory symlinks is unavailable: {error}")
+            with self.assertRaises(UpdateError):
+                self.updater.environment_python((link / "python").relative_to(self.root).as_posix())
+
+    def test_broken_environment_executable_link_is_rejected(self):
+        python = self.updater.directory / ("a" * 32) / "environment/bin/python"
+        python.parent.mkdir(parents=True)
+        try:
+            python.symlink_to(self.root / "missing-python")
+        except OSError as error:
+            self.skipTest(f"Creating executable symlinks is unavailable: {error}")
+        with self.assertRaises(UpdateError):
+            self.updater.environment_python(python.relative_to(self.root).as_posix())
 
     def test_only_configured_https_github_repository_is_allowed(self):
         self.assertEqual(repository(f"https://github.com/{REPO}/releases/latest"), REPO)
@@ -307,3 +355,41 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
             backend.prepare.assert_not_called()
         finally:
             service.lock.release()
+
+
+class LinuxUpdateRepairTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.target = self.root / "bot_app/infrastructure/updates.py"
+        self.target.parent.mkdir(parents=True)
+        self.source = f"def check(path, expected):\n    {OLD_CHECK}\n        raise ValueError('bad path')\n"
+        self.target.write_text(self.source, encoding="utf-8")
+        (self.root / "scripts").mkdir()
+        shutil.copy2(Path(__file__).resolve().parents[1] / "scripts/run_bot.py", self.root / "scripts/run_bot.py")
+
+    def test_repair_backs_up_the_exact_original_and_is_idempotent(self):
+        backup = repair(self.root)
+        self.assertEqual(backup.read_text(encoding="utf-8"), self.source)
+        self.assertEqual(self.target.read_text(encoding="utf-8"), self.source.replace(OLD_CHECK, NEW_CHECK))
+        self.assertIsNone(repair(self.root))
+        self.assertEqual(len(list(self.target.parent.glob("*.before-linux-fix-*"))), 1)
+
+    def test_unknown_source_is_left_untouched(self):
+        self.target.write_text("# unexpected updater\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "known bug"):
+            repair(self.root)
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "# unexpected updater\n")
+        self.assertEqual(list(self.target.parent.glob("*.before-linux-fix-*")), [])
+
+    def test_running_launcher_must_be_stopped_before_repair(self):
+        from scripts.run_bot import LauncherLock
+        lock = LauncherLock(self.root / "runtime/launcher.lock")
+        self.assertTrue(lock.acquire())
+        try:
+            with self.assertRaisesRegex(ValueError, "Stop the bot"):
+                repair(self.root)
+            self.assertEqual(self.target.read_text(encoding="utf-8"), self.source)
+        finally:
+            lock.release()
