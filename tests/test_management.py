@@ -53,6 +53,25 @@ class ManagementTests(StorageFixture, unittest.TestCase):
         self.assertTrue(self.service.get_control_result(identifier)["ok"])
         self.assertEqual(self.service.get_status()["last_control"]["id"], identifier)
 
+    def test_old_welcome_settings_load_and_dashboard_preserves_custom_message(self):
+        old = {"enabled": False, "include_bots": False, "channel_id": "10"}
+        path = self.root / "guilds" / "1" / "welcome.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(old), encoding="utf-8")
+        self.assertEqual(self.service.get_settings("welcome", 1), dict(old, message=""))
+        self.service.update_settings("welcome", dict(old, message="Hello {user}!"), 1)
+        self.service.update_settings("welcome", dict(old, enabled=True, channel_id="11"), 1)
+        reloaded = JsonSettingsRepository(self.root).read("welcome", 1)
+        self.assertEqual(reloaded, dict(old, enabled=True, channel_id="11", message="Hello {user}!"))
+
+    def test_invalid_welcome_template_does_not_overwrite_saved_settings(self):
+        original = self.service.get_settings("welcome", 1)
+        for message in (123, None, "x" * 2001, "🎉" * 1001):
+            with self.subTest(message_type=type(message)):
+                with self.assertRaises(ValueError):
+                    self.service.update_settings("welcome", dict(original, message=message), 1)
+                self.assertEqual(self.service.get_settings("welcome", 1), original)
+
     def test_expired_and_previous_instance_commands_are_rejected(self):
         for previous in (False, True):
             identifier = self.service.submit_control({"action": "skip", "session_id": "1:2"})

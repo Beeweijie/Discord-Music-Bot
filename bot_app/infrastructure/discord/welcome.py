@@ -1,6 +1,7 @@
 """Discord channel selection, safe mention rendering and delivery."""
 import logging
 import discord
+from bot_app.domain.welcome import render_welcome_message
 
 logger = logging.getLogger("bot.welcome")
 
@@ -13,7 +14,7 @@ class WelcomeDelivery:
         channel = guild.system_channel
         return channel if isinstance(channel, discord.TextChannel) else None
 
-    async def send(self, channel, member, reason):
+    async def send(self, channel, member, reason, template=""):
         bot_member = member.guild.me
         if bot_member is None:
             logger.warning("Bot member is not cached", extra={"guild_id": member.guild.id})
@@ -23,9 +24,8 @@ class WelcomeDelivery:
             logger.warning("Missing welcome permissions", extra={"guild_id": member.guild.id, "channel_id": channel.id})
             return False
         guild_name = discord.utils.escape_markdown(member.guild.name)
-        msg = f"欢迎 {member.mention} 加入 **{guild_name}**！🎉"
-        if member.guild.member_count is not None:
-            msg += f"\n你是第 **{member.guild.member_count}** 位成员。"
+        msg = render_welcome_message(template, user=member.mention, server=guild_name,
+                                     count=member.guild.member_count)
         try:
             await channel.send(msg, allowed_mentions=discord.AllowedMentions(
                 everyone=False, roles=False, users=[member], replied_user=False,

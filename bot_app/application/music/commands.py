@@ -29,7 +29,7 @@ class CommandsOperations:
         await ctx.send(f"✅ Connected to **{channel.name}**.")
 
 
-    async def _queue_collection_input(self, ctx, input: str, channel, session):
+    async def _queue_collection_input(self, ctx, input: str, channel, session, *, front: bool = False):
         """Queue a playlist/collection through the unified play command."""
         try:
             songs = await self.run_media(
@@ -49,6 +49,8 @@ class CommandsOperations:
             songs = self._dedupe_songs(songs)
 
             async with session.queue_lock:
+                if session.stopped or self.sessions.get(self._channel_key(channel)) is not session:
+                    return
                 existing_keys = {self._song_key(song) for song in session.queue}
                 if session.current_song:
                     existing_keys.add(self._song_key(session.current_song))
@@ -56,8 +58,9 @@ class CommandsOperations:
 
                 deduped_count = len(songs)
                 if len(songs) > self.settings_for(ctx.guild.id)['max_playlist_songs']:
-                    songs = random.sample(songs, self.settings_for(ctx.guild.id)['max_playlist_songs'])
-                elif len(songs) > 1:
+                    limit = self.settings_for(ctx.guild.id)['max_playlist_songs']
+                    songs = songs[:limit] if front else random.sample(songs, limit)
+                elif len(songs) > 1 and not front:
                     random.shuffle(songs)
 
                 remaining_slots = self.settings_for(ctx.guild.id)['max_queue_size'] - len(session.queue)
@@ -72,7 +75,10 @@ class CommandsOperations:
                     await ctx.send("All these tracks are already queued.")
                     return
 
-                session.queue.extend(songs)
+                if front:
+                    session.queue[0:0] = songs
+                else:
+                    session.queue.extend(songs)
                 queue_size = len(session.queue)
 
             self._log_session(
@@ -85,14 +91,19 @@ class CommandsOperations:
             self._write_music_status(session)
 
             if len(songs) == 1:
-                await ctx.send(self._queued_song_message(songs[0], queue_size))
+                await ctx.send(
+                    f"✅ Added to the front of the queue: **{songs[0].title}** (position 1)"
+                    if front else self._queued_song_message(songs[0], queue_size)
+                )
             else:
-                note = f"✅ Added **{len(songs)}** tracks to the queue"
+                destination = "the front of the queue" if front else "the queue"
+                note = f"✅ Added **{len(songs)}** tracks to {destination}"
                 extras = []
                 if original_count != deduped_count:
                     extras.append(f"{original_count - deduped_count} duplicates removed")
                 if deduped_count > self.settings_for(ctx.guild.id)['max_playlist_songs']:
-                    extras.append(f"randomly selected {self.settings_for(ctx.guild.id)['max_playlist_songs']} tracks")
+                    selection = "selected the first" if front else "randomly selected"
+                    extras.append(f"{selection} {self.settings_for(ctx.guild.id)['max_playlist_songs']} tracks")
                 if limited_by_queue:
                     extras.append(f"capped at {self.settings_for(ctx.guild.id)['max_queue_size']} queued tracks")
                 if extras:
@@ -112,7 +123,15 @@ class CommandsOperations:
             await ctx.send(f"❌ Could not load playlist:{e}")
 
 
-    async def _play_impl(self, ctx, input: str | None = None):
+    async def _playtop_impl(self, ctx, input: str):
+        """Add tracks to the front of the waiting queue without interrupting playback."""
+        if not (input or "").strip():
+            await ctx.send("Provide a song name or URL to add to the front of the queue.")
+            return
+        await self._play_impl(ctx, input, front=True)
+
+
+    async def _play_impl(self, ctx, input: str | None = None, *, front: bool = False):
         """添加歌曲到队列；未提供输入时使用默认歌单。"""
         channel = self._get_user_voice_channel(ctx)
         if not channel:
@@ -147,11 +166,11 @@ class CommandsOperations:
             if self._is_youtube_radio_url(input):
                 input = self._normalize_youtube_watch_url(input)
             elif self._is_youtube_playlist_like_url(input):
-                await self._queue_collection_input(ctx, input, channel, session)
+                await self._queue_collection_input(ctx, input, channel, session, front=front)
                 return
 
         if is_bilibili_url(input):
-            await self._queue_collection_input(ctx, input, channel, session)
+            await self._queue_collection_input(ctx, input, channel, session, front=front)
             return
 
         if not is_valid_url(input) and not self._local_music_exists(input):
@@ -178,7 +197,10 @@ class CommandsOperations:
             if len(session.queue) >= self.settings_for(ctx.guild.id)['max_queue_size']:
                 await ctx.send(f"Queue full (limit: {self.settings_for(ctx.guild.id)['max_queue_size']} tracks).")
                 return
-            session.queue.append(song)
+            if front:
+                session.queue.insert(0, song)
+            else:
+                session.queue.append(song)
             queue_size = len(session.queue)
 
         self._log_session(
@@ -189,7 +211,10 @@ class CommandsOperations:
             title=song.title,
         )
         self._write_music_status(session)
-        await ctx.send(self._queued_song_message(song, queue_size))
+        await ctx.send(
+            f"✅ Added to the front of the queue: **{song.title}** (position 1)"
+            if front else self._queued_song_message(song, queue_size)
+        )
 
         vc = await self._ensure_connected(ctx, channel, session)
         if not vc:
@@ -291,6 +316,7 @@ class CommandsOperations:
             "`/seek 1:30` jumps; `/seek +30` forwards; `/seek -15` rewinds.\n"
             "`/loop off|one|queue` · `/sleep minutes` (0 cancels)\n\n"
             "**Queue**\n"
+            "`/playtop song or URL` adds to the front without interrupting playback.\n"
             "`/queue [page]` · `/nextup index` · `/remove index` · `/move from to`\n"
             "`/shuffle` · `/fair` (take turns) · `/dedupe` · `/surprise`\n"
             "`/clear` clears waiting tracks. `/stop` clears everything and disconnects.\n\n"

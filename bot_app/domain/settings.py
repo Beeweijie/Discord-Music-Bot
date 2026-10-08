@@ -2,19 +2,20 @@
 import hashlib
 import json
 from urllib.parse import urlsplit
+from bot_app.domain.welcome import MAX_WELCOME_LENGTH
 
 DEFAULT_PLAYLIST_URL = "https://music.youtube.com/playlist?list=PLH6zD0MCw2r4"
 
 VOICE_DEFAULTS = {"enabled": False, "level": "normal", "model": "small"}
-MUSIC_DEFAULTS = {"default_volume": 40, "max_queue_size": 500, "max_playlist_songs": 500,
+MUSIC_DEFAULTS = {"default_volume": 40, "max_queue_size": 1000, "max_playlist_songs": 1000,
                   "default_playlist_url": DEFAULT_PLAYLIST_URL, "predownload_count": 3, "idle_timeout_seconds": 300, "cache_max_age_seconds": 3600}
-WELCOME_DEFAULTS = {"enabled": True, "include_bots": True, "channel_id": "0"}
+WELCOME_DEFAULTS = {"enabled": True, "include_bots": True, "channel_id": "0", "message": ""}
 DEFAULTS = {"music": MUSIC_DEFAULTS, "welcome": WELCOME_DEFAULTS, "voice_moderation": VOICE_DEFAULTS}
 EFFECTS = {
     "music": {"default_playlist_url": "next_operation", "default_volume": "new_session", "max_queue_size": "next_operation",
               "max_playlist_songs": "next_operation", "predownload_count": "next_operation",
               "idle_timeout_seconds": "next_idle_check", "cache_max_age_seconds": "next_cache_cleanup"},
-    "welcome": {"enabled": "next_event_or_restart", "include_bots": "next_event", "channel_id": "next_event"},
+    "welcome": {"enabled": "next_event_or_restart", "include_bots": "next_event", "channel_id": "next_event", "message": "next_event"},
     "voice_moderation": {key: "stored_only" for key in VOICE_DEFAULTS},
 }
 
@@ -43,7 +44,10 @@ def validate_settings(section: str, value: dict) -> dict:
         channel_id = value["channel_id"]
         if not isinstance(channel_id, str) or not channel_id.isascii() or not channel_id.isdigit() or not 0 <= int(channel_id) < 2**64:
             raise ValueError("Channel ID must be numeric; 0 uses the server system channel.")
-        return dict(value, channel_id=str(int(channel_id)))
+        message = value["message"]
+        if not isinstance(message, str) or len(message.encode("utf-16-le")) > MAX_WELCOME_LENGTH * 2:
+            raise ValueError(f"Welcome message must be text up to {MAX_WELCOME_LENGTH} characters (emoji may count as two).")
+        return dict(value, channel_id=str(int(channel_id)), message=message.strip())
     if type(value["enabled"]) is not bool:
         raise ValueError("enabled must be a boolean value.")
     if value["level"] not in ("low", "normal", "strict"):

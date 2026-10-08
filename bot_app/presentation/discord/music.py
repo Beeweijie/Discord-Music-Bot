@@ -37,7 +37,7 @@ class Music(commands.Cog):
         interaction: discord.Interaction,
         current: str,
     ) -> List[app_commands.Choice[str]]:
-        """给 /play input 提供本地音乐和 YouTube 搜索候选。"""
+        """Provide local music and YouTube choices for /play and /playtop."""
         current = current.strip()
         choices = self.service._local_music_choices(current)
 
@@ -65,6 +65,12 @@ class Music(commands.Cog):
     @commands.command(name="play")
     async def play_prefix(self, ctx, *, input: str = ""):
         await self.service.dispatch('play', ctx, input)
+
+
+    @commands.command(name="playtop")
+    async def playtop_prefix(self, ctx, *, input: str):
+        """Add a song or playlist to the front without interrupting playback."""
+        await self.service.dispatch('playtop', ctx, input)
 
 
     @commands.command(name="playlist_defult")
@@ -166,6 +172,13 @@ class Music(commands.Cog):
     @app_commands.autocomplete(input=play_input_autocomplete)
     async def play_slash(self, interaction: discord.Interaction, input: str = ""):
         await self._run_slash(interaction, 'play', input)
+
+
+    @app_commands.command(name="playtop", description="Add a song or playlist to the front without interrupting playback")
+    @app_commands.describe(input="URL, playlist, local MP3, or song name to add to the front of the queue")
+    @app_commands.autocomplete(input=play_input_autocomplete)
+    async def playtop_slash(self, interaction: discord.Interaction, input: str):
+        await self._run_slash(interaction, 'playtop', input)
 
 
     @app_commands.command(name="queue", description="View the queue in your voice channel")

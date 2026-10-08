@@ -84,8 +84,8 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         await self.load_extension("bot_app.presentation.discord.music")
         await self.load_extension("bot_app.presentation.discord.polls")
-        if self.intents.members:
-            await self.load_extension("bot_app.presentation.discord.welcome")
+        # Keep !welcome available even when member events were disabled at startup.
+        await self.load_extension("bot_app.presentation.discord.welcome")
         self.apply_saved_settings()
         self.settings_refresh.start()
         # A transient sync failure must not take working prefix commands offline.

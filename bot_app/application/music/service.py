@@ -94,7 +94,7 @@ class PlaybackService(RecoveryOperations, SessionsOperations, PlaybackOperations
         media never holds this lock; queue_lock and generation checks protect
         the later commit, so Stop remains responsive during a download.
         """
-        allowed = {"join", "play", "queue", "pause", "resume", "now", "remove", "volume",
+        allowed = {"join", "play", "playtop", "queue", "pause", "resume", "now", "remove", "volume",
                    "seek", "shuffle", "skip", "stop", "help", "clear", "move", "loop", "replay",
                    "fair", "dedupe", "nextup", "surprise", "sleep", "history", "favorite", "favorites",
                    "unfavorite", "playlist_save", "playlist_load", "playlists", "playlist_delete"}
@@ -118,7 +118,7 @@ class PlaybackService(RecoveryOperations, SessionsOperations, PlaybackOperations
     async def _dispatch_checked(self, action, ctx, *args):
         handler = getattr(self, f"_{action}_impl")
         session = self._get_existing_session(ctx)
-        if session and action not in {"join", "play", "playlist_load", "queue", "now", "help"}:
+        if session and action not in {"join", "play", "playtop", "playlist_load", "queue", "now", "help"}:
             async with session.control_lock:
                 if self.sessions.get(self._session_status_key(session)) is not session or session.stopped:
                     raise ValueError("This session has ended. Use /resume or /play to continue.")
@@ -131,6 +131,8 @@ class PlaybackService(RecoveryOperations, SessionsOperations, PlaybackOperations
         session = self._get_existing_session(ctx)
         if session:
             self._write_music_status(session)
+            if action == "playtop":
+                await self._refresh_now_playing_panel(session)
         return result
 
     async def _skip_session(self, session_id, session):

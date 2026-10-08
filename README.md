@@ -23,6 +23,10 @@ Run through `start.bat`, the tray, or `python main.py` so the restart supervisor
 
 Join a voice channel and use `/play` with a song name or URL. Leave the input empty to use your server's default playlist, or resume a saved queue. Use **Add song**, **Pause / Resume**, **Skip**, and **Favorite** on the Discord player. The player displays the original cover image, without a progress bar.
 
+Use `/playtop input:song name or URL` or `!playtop song name or URL` to add music to the front of the waiting queue. The current track keeps playing, and paused playback stays paused. When idle, playback starts from the new track. Input is required; local MP3s and autocomplete work like `/play`. Playlists and collections are inserted as a block in their original order, subject to the existing duplicate and size limits. `/playtop` shares `/play`'s cooldown. To move a track already in the queue, use `/nextup index`.
+
+The default playlist import limit and waiting queue capacity are both 1000 tracks. Each server can adjust these limits in the dashboard.
+
 The local dashboard is available at `http://127.0.0.1:8766/`. Controls, command descriptions and operation messages are in English. Welcome messages may remain in Chinese.
 
 ### New music tools
@@ -59,10 +63,12 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `playlist_delete` | both | `name: str` | Delete a personal playlist without interrupting playback |
 | `join` | both | None | Join your voice channel |
 | `playlist_defult` | ! | `url` | Set this server's default playlist; requires Manage Server. Example: `!playlist_defult https://music.youtube.com/playlist?list=PLH6zD0MCw2r4` |
+| `welcome` | ! | Optional message or `on`, `off`, `status`, `reset`, `test` | Configure welcomes for this server; requires Manage Server; no text selects the current channel and enables welcomes |
 | `seek` | both | `position` | Seek to a timestamp, such as `/seek 1:30` or `!seek 90`; 0 restarts |
 | `poll` | both | `question options hours multiple` | Create a poll with pipe-separated options; defaults to 24 hours and single choice |
 | `poll_end` | both | `message` | End a poll early using a message link or an ID from this channel; creator or administrator only |
 | `play` | both | `input` | Play local MP3s, YouTube/Bilibili links, playlists or collections, or search keywords; `/play` supports autocomplete |
+| `playtop` | both | `input` (required) | Add a song or playlist to the front of the waiting queue without interrupting playback; supports autocomplete |
 | `queue` | both | None | Show this voice channel's queue |
 | `pause` | both | None | Pause playback |
 | `resume` | both | None | Resume playback |
@@ -85,6 +91,21 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `help` | ! | Optional command name | List commands or show help for one command |
 
 There are currently no slash-only commands. Player buttons use the same operations as commands.
+
+### Welcome messages
+
+Members with **Manage Server** permission can configure welcomes using prefix commands:
+
+- `!welcome`: use the current text channel and enable welcomes, keeping the saved message (or the default).
+- `!welcome Welcome {user} to {server}! You are member {count}.`: also save this custom message; multiline text is supported.
+- `!welcome off` / `!welcome on`: disable or enable without changing the saved channel or message.
+- `!welcome status`: show the enabled state, channel and message template.
+- `!welcome reset`: restore the default welcome text, keeping the channel and enabled state.
+- `!welcome test`: send a preview in the configured welcome channel using the command author as the new member, even when welcomes are disabled. This does not change settings or mark the member as already welcomed.
+
+Templates support `{user}` (member mention), `{server}` (server name) and `{count}` (member count). Other braces remain literal. The default is the original Chinese welcome with member count when available. Templates are limited to 2000 characters (emoji may count as two); expanded messages are capped to Discord's limit. Only the welcomed member can be pinged, not roles or everyone. A single reserved word such as `off` is treated as an operation; otherwise the whole input is welcome text.
+
+Settings are saved per server in `config/guilds/<guild-id>/welcome.json` and apply to future member events. The web dashboard can still change the channel and switches without replacing a custom message. The bot needs View Channel and Send Messages in the welcome channel. If member events were disabled at startup, enabling welcomes saves the settings and asks you to restart; enable **Server Members Intent** in the Discord developer portal. `!welcome` remains available while welcomes are disabled.
 
 ### Playback recovery and Discord player
 

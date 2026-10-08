@@ -45,6 +45,9 @@ class ManagementService:
         return self.settings.read(section, guild_id)
 
     def update_settings(self, section: str, value: dict, guild_id=None) -> dict:
+        if section == "welcome" and isinstance(value, dict) and "message" not in value:
+            # Existing dashboard forms edit switches/channel only. Keep the template.
+            value = dict(value, message=self.get_settings(section, guild_id)["message"])
         settings = validate_settings(section, value)
         if section == "welcome" and guild_id is not None and settings["channel_id"] != "0":
             guild = next((g for g in self.get_guilds() if g["id"] == str(guild_id)), None)

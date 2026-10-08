@@ -56,7 +56,160 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(value=value):
                 await self.service.dispatch("play", self.ctx, value)
                 self.service._queue_collection_input.assert_awaited_with(
-                    self.ctx, explicit if value == explicit else default, self.channel, self.session)
+                    self.ctx, explicit if value == explicit else default, self.channel, self.session, front=False)
+
+    async def test_playtop_inserts_first_preserves_playback_and_saves_order(self):
+        current, first, second, priority = [song(name) for name in ("current", "first", "second", "priority")]
+        self.service.run_media = AsyncMock(return_value=priority)
+        self.service._start_predownload_task = Mock()
+        self.service.play_next = AsyncMock()
+        self.service.queue_repository = Mock()
+        for paused in (False, True):
+            with self.subTest(paused=paused):
+                self.service.command_cooldowns.clear()
+                self.session.current_song = current
+                self.session.queue = [first, second]
+                self.session.position_seconds = 42
+                self.vc.is_playing.return_value = not paused
+                self.vc.is_paused.return_value = paused
+                await self.service.dispatch("playtop", self.ctx, "priority")
+                self.assertEqual(self.session.queue, [priority, first, second])
+                self.assertIs(self.session.current_song, current)
+                self.assertEqual(self.session.position_seconds, 42)
+                self.vc.stop.assert_not_called()
+                self.vc.resume.assert_not_called()
+                self.vc.play.assert_not_called()
+                self.service.play_next.assert_not_awaited()
+                self.presenter._refresh_now_playing_panel.assert_awaited_with(self.session)
+                self.service._start_predownload_task.assert_called_with("1:2")
+                saved = self.service.queue_repository.save.call_args.args[1]
+                self.assertEqual([track["title"] for track in saved["tracks"]],
+                                 ["current", "priority", "first", "second"])
+                self.ctx.send.assert_any_await("✅ Added to the front of the queue: **priority** (position 1)")
+
+    async def test_playtop_resolves_search_url_and_local_input_like_play(self):
+        (self.media.music_dir / "local.mp3").write_bytes(b"audio")
+        priority = song("priority")
+        self.service.run_media = AsyncMock(return_value=priority)
+        self.service._start_predownload_task = Mock()
+        for query, resolver in (("a song name", self.service._search_youtube_song),
+                                ("https://www.youtube.com/watch?v=abcdefghijk", self.service._get_song_for_input),
+                                ("local.mp3", self.service._get_song_for_input)):
+            with self.subTest(query=query):
+                self.service.command_cooldowns.clear()
+                self.session.queue = [song("waiting")]
+                await self.service.dispatch("playtop", self.ctx, query)
+                self.service.run_media.assert_awaited_with(resolver, query, self.ctx.author)
+                self.assertIs(self.session.queue[0], priority)
+
+    async def test_playtop_starts_new_track_when_idle(self):
+        (self.media.music_dir / "priority.mp3").write_bytes(b"audio")
+        priority, waiting = song("priority"), song("waiting")
+        self.service.run_media = AsyncMock(return_value=priority)
+        self.service._start_predownload_task = Mock()
+        self.vc.is_playing.return_value = False
+        for queue in ([], [waiting]):
+            with self.subTest(queued=bool(queue)):
+                self.service.command_cooldowns.clear()
+                self.session.current_song = None
+                self.session.queue = list(queue)
+                self.vc.play.reset_mock()
+                await self.service.dispatch("playtop", self.ctx, "priority.mp3")
+                self.assertIs(self.session.current_song, priority)
+                self.assertEqual(self.session.queue, queue)
+                self.vc.play.assert_called_once()
+                self.vc.stop.assert_not_called()
+
+    async def test_playtop_collection_preserves_order_and_applies_limits(self):
+        current, waiting, first, second, third = [song(name) for name in ("current", "waiting", "first", "second", "third")]
+        self.session.current_song = current
+        self.service.run_media = AsyncMock(return_value=[current, waiting, first, first, second, third])
+        self.service._start_predownload_task = Mock()
+        for url in ("https://www.youtube.com/playlist?list=example", "https://www.bilibili.com/video/BV1example"):
+            for playlist_limit, queue_limit in ((2, 10), (10, 3)):
+                with self.subTest(url=url, playlist_limit=playlist_limit, queue_limit=queue_limit):
+                    self.service.command_cooldowns.clear()
+                    self.session.queue = [waiting]
+                    self.service.settings.update(max_playlist_songs=playlist_limit, max_queue_size=queue_limit)
+                    await self.service.dispatch("playtop", self.ctx, url)
+                    self.assertEqual(self.session.queue, [first, second, waiting])
+                    self.assertIs(self.session.current_song, current)
+                    self.vc.stop.assert_not_called()
+                    self.assertIn("2** tracks to the front of the queue", self.ctx.send.await_args.args[0])
+
+    async def test_playtop_single_track_collection_reports_first_position(self):
+        priority, waiting = song("priority"), song("waiting")
+        self.session.queue = [waiting]
+        self.service.run_media = AsyncMock(return_value=[priority])
+        self.service._start_predownload_task = Mock()
+        await self.service.dispatch("playtop", self.ctx, "https://www.bilibili.com/video/BV1example")
+        self.assertEqual(self.session.queue, [priority, waiting])
+        self.ctx.send.assert_any_await("✅ Added to the front of the queue: **priority** (position 1)")
+
+    async def test_playtop_rejects_full_queue_before_and_after_lookup(self):
+        waiting = song("waiting")
+        self.service.settings["max_queue_size"] = 1
+        self.session.queue = [waiting]
+        self.service.run_media = AsyncMock(return_value=song("priority"))
+        await self.service.dispatch("playtop", self.ctx, "priority")
+        self.service.run_media.assert_not_awaited()
+        self.assertEqual(self.session.queue, [waiting])
+        self.service.command_cooldowns.clear()
+        self.session.queue = []
+        async def fill_queue(*args):
+            self.session.queue.append(waiting)
+            return song("priority")
+        self.service.run_media.side_effect = fill_queue
+        await self.service.dispatch("playtop", self.ctx, "priority")
+        self.assertEqual(self.session.queue, [waiting])
+        self.ctx.send.assert_awaited_with("Queue full (limit: 1 tracks).")
+
+    async def test_playtop_requires_input_and_voice_channel(self):
+        self.service.run_media = AsyncMock()
+        self.service._continue_saved = AsyncMock()
+        self.session.restored = True
+        self.session.queue = [song("saved")]
+        await self.service.dispatch("playtop", self.ctx, "   ")
+        self.ctx.send.assert_awaited_with("Provide a song name or URL to add to the front of the queue.")
+        self.ctx.author.voice = None
+        await self.service.dispatch("playtop", self.ctx, "priority")
+        self.ctx.send.assert_awaited_with("Join a voice channel first.")
+        self.service.run_media.assert_not_awaited()
+        self.service._continue_saved.assert_not_awaited()
+        self.assertEqual([track.title for track in self.session.queue], ["saved"])
+
+    async def test_playtop_shares_play_cooldown_and_play_still_appends(self):
+        waiting, added = song("waiting"), song("added")
+        self.service.run_media = AsyncMock(return_value=added)
+        self.service._start_predownload_task = Mock()
+        with patch("bot_app.application.music.sessions.time.monotonic", return_value=100):
+            for first_action, blocked_action in (("play", "playtop"), ("playtop", "play")):
+                with self.subTest(first_action=first_action):
+                    self.service.command_cooldowns.clear()
+                    self.service.run_media.reset_mock()
+                    self.session.queue = [waiting]
+                    await self.service.dispatch(first_action, self.ctx, "added")
+                    await self.service.dispatch(blocked_action, self.ctx, "blocked")
+                    self.service.run_media.assert_awaited_once()
+                    expected = [waiting, added] if first_action == "play" else [added, waiting]
+                    self.assertEqual(self.session.queue, expected)
+
+    async def test_stop_during_playtop_lookup_stays_responsive_and_prevents_late_enqueue(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def lookup(*args):
+            entered.set()
+            await release.wait()
+            return song("late")
+        self.service.run_media = AsyncMock(side_effect=lookup)
+        task = asyncio.create_task(self.service.dispatch("playtop", self.ctx, "priority"))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await asyncio.wait_for(self.service.execute_control({"action": "stop", "session_id": "1:2"}), 1)
+        finally:
+            release.set()
+            await task
+        self.assertEqual(self.session.queue, [])
+        self.assertNotIn("1:2", self.service.sessions)
 
     async def test_seek_preserves_song_queue_and_ignores_old_callback(self):
         path = Path(self.tmp.name) / "audio.mp3"
@@ -107,7 +260,7 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.service._check_cooldown = AsyncMock(return_value=True)
         self.service._queue_collection_input = AsyncMock()
         await self.service.dispatch("play", self.ctx, None)
-        self.service._queue_collection_input.assert_awaited_with(self.ctx, custom, self.channel, self.session)
+        self.service._queue_collection_input.assert_awaited_with(self.ctx, custom, self.channel, self.session, front=False)
         for guild_id, volume in ((1, 17), (2, 63)):
             channel = SimpleNamespace(id=99, guild=SimpleNamespace(id=guild_id))
             self.assertEqual(self.service._get_session(channel).volume, volume)

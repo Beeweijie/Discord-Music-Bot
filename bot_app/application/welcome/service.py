@@ -16,7 +16,7 @@ class WelcomeService:
     def settings_for(self, guild_id):
         if self.settings_repository is not None:
             return self.settings_repository.read("welcome", guild_id)
-        return {"enabled": self.enabled, "include_bots": self.include_bots, "channel_id": self.channel_id}
+        return {"enabled": self.enabled, "include_bots": self.include_bots, "channel_id": self.channel_id, "message": ""}
 
     def _pick_channel(self, guild):
         return self.delivery.pick_channel(guild, int(self.settings_for(guild.id)["channel_id"]))
@@ -35,7 +35,7 @@ class WelcomeService:
             return
         self._sending.add(event_key)
         try:
-            if await self.delivery.send(channel, member, reason):
+            if await self.delivery.send(channel, member, reason, settings.get("message", "")):
                 self._welcomed[key] = joined_at
                 self._welcomed.move_to_end(key)
                 while len(self._welcomed) > self.max_remembered():
