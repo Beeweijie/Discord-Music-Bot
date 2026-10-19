@@ -27,6 +27,8 @@ Use `/playtop input:song name or URL` or `!playtop song name or URL` to add musi
 
 The default playlist import limit and waiting queue capacity are both 1000 tracks. Each server can adjust these limits in the dashboard.
 
+Each server has one player and one shared queue. `/join` moves the bot to your voice channel while keeping the current track, queue, playback position, volume and pause state. Moving the bot in Discord keeps the same player too. Other playback controls require you to share the bot's voice channel. When disconnected, `/resume` can restore the server queue in any voice channel.
+
 The local dashboard is available at `http://127.0.0.1:8766/`. Controls, command descriptions and operation messages are in English. Welcome messages may remain in Chinese.
 
 ### New music tools
@@ -35,7 +37,7 @@ The local dashboard is available at `http://127.0.0.1:8766/`. Controls, command 
 - **Your library:** `/favorite`, `/favorites`, `/unfavorite index:1`. `/playlist_save name:Chill` saves the current track plus queue; `/playlist_load name:Chill` appends it. `/playlist_load name:favorites` plays favorites. `/playlists` lists saved playlists; `/playlist_delete` removes one. Names autocomplete in Discord. Personal libraries are isolated by server and user and survive restarts.
 - **Fair queue:** `/fair` takes turns by requester while preserving each person's order. `/dedupe` removes duplicate waiting tracks. `/nextup index:3` moves track 3 to the front. `/surprise` picks a random next track without interrupting the current song.
 - **Sleep:** `/sleep minutes:30` pauses after 30 minutes and keeps the queue. `/sleep minutes:0` cancels the timer. Timers are checked every 15 seconds and persist across restarts.
-- **Paused for 10 minutes:** disconnect automatically and save the current position and queue. The check runs every 30 seconds. `/resume` reconnects and continues; the dashboard can resume when someone is in the original voice channel. Empty-channel timeout can disconnect earlier.
+- **Paused for 10 minutes:** disconnect automatically and save the current position and queue. The check runs every 30 seconds. `/resume` reconnects in your current voice channel; the dashboard resumes in the last voice channel when someone is there. Empty-channel timeout can disconnect earlier.
 - **History:** `/history page:1` shows the latest 100 completed/skipped tracks in this session. The web dashboard shows the latest 20. History survives restart and automatic disconnection; explicit `/stop` clears the session.
 - **Playback fixes:** volume changes apply immediately. Skip bypasses track repeat. `/replay` restarts without adding queue duplicates. `/seek +30` and `/seek -15` move relative to the current position.
 
@@ -53,7 +55,7 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `nextup` | both | `index: int` | Move the selected track to the front of the queue |
 | `surprise` | both | None | Choose a random next track without interrupting playback |
 | `sleep` | both | `minutes: int = 0` | Schedule a pause and preserve the queue; 0 cancels |
-| `history` | both | `page: int = 1` | Show recently played tracks in this voice channel |
+| `history` | both | `page: int = 1` | Show recently played tracks in this server |
 | `favorite` | both | None | Favorite the current song |
 | `favorites` | both | `page: int = 1` | Show your favorites in this server |
 | `unfavorite` | both | `index: int` | Remove a favorite by its index |
@@ -61,7 +63,7 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `playlist_load` | both | `name: str` | Append a personal playlist; favorites loads your favorites |
 | `playlists` | both | None | List your personal playlists |
 | `playlist_delete` | both | `name: str` | Delete a personal playlist without interrupting playback |
-| `join` | both | None | Join your voice channel |
+| `join` | both | None | Join or move to your voice channel, keeping the server queue and current track |
 | `playlist_defult` | ! | `url` | Set this server's default playlist; requires Manage Server. Example: `!playlist_defult https://music.youtube.com/playlist?list=PLH6zD0MCw2r4` |
 | `welcome` | ! | Optional message or `on`, `off`, `status`, `reset`, `test` | Configure welcomes for this server; requires Manage Server; no text selects the current channel and enables welcomes |
 | `seek` | both | `position` | Seek to a timestamp, such as `/seek 1:30` or `!seek 90`; 0 restarts |
@@ -69,7 +71,7 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `poll_end` | both | `message` | End a poll early using a message link or an ID from this channel; creator or administrator only |
 | `play` | both | `input` | Play local MP3s, YouTube/Bilibili links, playlists or collections, or search keywords; `/play` supports autocomplete |
 | `playtop` | both | `input` (required) | Add a song or playlist to the front of the waiting queue without interrupting playback; supports autocomplete |
-| `queue` | both | None | Show this voice channel's queue |
+| `queue` | both | None | Show this server's queue |
 | `pause` | both | None | Pause playback |
 | `resume` | both | None | Resume playback |
 | `now` | both | None | Show the current track and player controls |
@@ -110,8 +112,9 @@ Settings are saved per server in `config/guilds/<guild-id>/welcome.json` and app
 ### Playback recovery and Discord player
 
 - HTTP 403 download failures trigger a fresh page lookup and up to two additional attempts, with another audio format on the final attempt. Persistent failures skip the track.
-- The queue, current track, volume, repeat mode and position are stored in `data/queues/<guild-id>/<voice-channel-id>.json`. Changes are saved immediately; playback position is checkpointed every 15 seconds. Restart does not automatically join voice. Use `/resume` or an empty `/play` in the original channel to continue. A new queue's empty `/play` uses the server's default playlist.
-- Explicit stop/clear removes the relevant queue state. An abrupt interruption may lose approximately 15 seconds of playback progress.
+- The server queue, current track, volume, repeat mode and position are stored in `data/queues/<guild-id>/queue.json`. Changes are saved immediately; playback position is checkpointed every 15 seconds. Restart does not automatically join voice. Use `/resume` or an empty `/play` in any voice channel to continue. A new queue's empty `/play` uses the server's default playlist.
+- v1.3.0 merges older per-channel snapshots into one server queue, retaining the original files as backups. Back up `data/` before upgrading. See the [v1.3.0 upgrade notes](docs/release-notes/v1.3.0.md) for migration and API changes.
+- `/stop` clears the server queue and disconnects; `/clear` only clears waiting tracks. An abrupt interruption may lose approximately 15 seconds of playback progress.
 - One Discord message updates the current track, cover, next track and controls. Temporary network failures preserve the message and retry; deleted messages are recreated. The cover changes with each track. The Discord player does not display playback progress.
 
 ### Polls

@@ -123,6 +123,8 @@ def supervise(root, args=None, fallback=None, readiness_timeout=90):
         process = launch(root, python, args)
         while True:
             code = process.wait()
+            logger.log(logging.INFO if code in (0, UPDATE_EXIT) else logging.ERROR,
+                "Bot child exited: pid=%s exit_code=%s", process.pid, code)
             if code != UPDATE_EXIT:
                 return code
             if not updater.pending.exists():

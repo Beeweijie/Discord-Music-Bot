@@ -55,9 +55,12 @@ def startup_problems() -> list[str]:
 
 async def run_bot(bot: MyBot, token: str):
     loop = asyncio.get_running_loop()
+    from bot_app.infrastructure.logging_setup import configure_asyncio_logging
+    previous_exception_handler = configure_asyncio_logging(loop)
     previous = signal.getsignal(signal.SIGTERM)
-    def shutdown(_signum, _frame):
-        loop.call_soon_threadsafe(lambda: asyncio.create_task(bot.close()))
+    def shutdown(signum, _frame):
+        logger.info("Shutdown requested: signal=%s", signal.Signals(signum).name)
+        loop.call_soon_threadsafe(lambda: asyncio.create_task(bot.close(), name="bot.shutdown"))
     signal.signal(signal.SIGTERM, shutdown)
     api = None
     try:
@@ -71,9 +74,12 @@ async def run_bot(bot: MyBot, token: str):
         async with bot:
             await bot.start(token)
     finally:
-        if api:
-            await api.cleanup()
-        signal.signal(signal.SIGTERM, previous)
+        try:
+            if api:
+                await api.cleanup()
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+            loop.set_exception_handler(previous_exception_handler)
 
 
 def main(argv=None) -> int:
@@ -95,6 +101,7 @@ def main(argv=None) -> int:
         logger.info("Discord Music Bot is already running.")
         return 0
     record = None
+    bot = None
     state, last_error = "offline", None
     try:
         if is_process_record_running(read_process_record(PID_FILE)):
@@ -103,22 +110,24 @@ def main(argv=None) -> int:
         from bot_app.infrastructure.logging_setup import configure_logging
         configure_logging(BASE_DIR / "logs")
         record = write_process_record(PID_FILE)
-        write_status(reset=True, state="starting", pid=record["pid"], instance_id=uuid.uuid4().hex,
+        instance_id = uuid.uuid4().hex
+        logger.info("Bot process starting: pid=%s instance=%s", record["pid"], instance_id)
+        write_status(reset=True, state="starting", pid=record["pid"], instance_id=instance_id,
                      bot_user=None, current_song=None, queue_size=0, music_sessions={})
         if problems:
             state, last_error = "error", " ".join(problems)
             logger.error(last_error)
             return 1
         lower_windows_process_priority()
-        bot = create_bot()
         try:
+            bot = create_bot()
             asyncio.run(run_bot(bot, os.environ["DISCORD_TOKEN"].strip()))
         except discord.LoginFailure:
             state, last_error = "error", "Discord 登录失败，请检查 DISCORD_TOKEN。"
         except discord.PrivilegedIntentsRequired:
             state, last_error = "error", "请在 Discord Developer Portal 启用 Members / Message Content Intent，或在 .env 中关闭相应功能。"
         except KeyboardInterrupt:
-            pass
+            logger.info("Shutdown requested from console")
         except Exception:
             state, last_error = "error", "启动或运行失败，请查看 logs/system.log。"
             logger.exception("Bot failed")
@@ -128,6 +137,8 @@ def main(argv=None) -> int:
     finally:
         # Only the process that acquired ownership may erase its runtime state.
         if record and read_process_record(PID_FILE) == record:
+            logger.info("Bot process ending: pid=%s state=%s update_restart=%s", record["pid"], state,
+                bool(getattr(bot, "update_requested", False)))
             write_status(state=state, last_error=last_error, pid=None, current_song=None,
                          requester=None, queue_size=0, latency_ms=None, music_sessions={})
             remove_process_record(PID_FILE, record)

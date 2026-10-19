@@ -23,7 +23,7 @@ class StorageFixture:
             p.start()
             self.addCleanup(p.stop)
         runtime.write_status(reset=True, pid=123, instance_id="test-instance", state="online",
-                             music_sessions={"1:2": {"guild_id": 123456789012345678, "channel_id": 2}})
+                             music_sessions={"1": {"guild_id": 123456789012345678, "channel_id": 2}})
         self.service = ManagementService(runtime, JsonSettingsRepository(self.root),
                                          FileLogReader(self.root / "bot.log"))
 
@@ -43,7 +43,7 @@ class ManagementTests(StorageFixture, unittest.TestCase):
             self.service.get_settings("../secret")
 
     def test_command_round_trip_and_acknowledgement(self):
-        identifier = self.service.submit_control({"action": "skip", "session_id": "1:2"})
+        identifier = self.service.submit_control({"action": "skip", "session_id": "1"})
         commands = runtime.drain_control_commands()
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0]["id"], identifier)
@@ -74,7 +74,7 @@ class ManagementTests(StorageFixture, unittest.TestCase):
 
     def test_expired_and_previous_instance_commands_are_rejected(self):
         for previous in (False, True):
-            identifier = self.service.submit_control({"action": "skip", "session_id": "1:2"})
+            identifier = self.service.submit_control({"action": "skip", "session_id": "1"})
             path = runtime.COMMANDS_DIR / f"{identifier}.json"
             command = json.loads(path.read_text())
             if previous:
@@ -86,10 +86,10 @@ class ManagementTests(StorageFixture, unittest.TestCase):
             self.assertFalse(self.service.get_control_result(identifier)["ok"])
 
     def test_invalid_controls_do_not_publish_files(self):
-        for command in [{"action":"shell", "session_id":"1:2"},
-                        {"action":"volume", "session_id":"1:2", "volume": True},
-                        {"action":"volume", "session_id":"1:2", "volume": 101},
-                        {"action":"loop", "session_id":"1:2", "mode": []}]:
+        for command in [{"action":"shell", "session_id":"1"},
+                        {"action":"volume", "session_id":"1", "volume": True},
+                        {"action":"volume", "session_id":"1", "volume": 101},
+                        {"action":"loop", "session_id":"1", "mode": []}]:
             with self.assertRaises(ValueError):
                 self.service.submit_control(command)
         self.assertFalse(runtime.COMMANDS_DIR.exists())
@@ -138,10 +138,10 @@ class ApiTests(StorageFixture, unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/api/v1/status")
         self.assertEqual(response.status, 200)
         response = await self.client.get("/api/v1/sessions", headers=self.headers)
-        self.assertEqual((await response.json())["1:2"]["guild_id"], "123456789012345678")
+        self.assertEqual((await response.json())["1"]["guild_id"], "123456789012345678")
 
     async def test_http_control_reaches_same_consumer_as_desktop(self):
-        response = await self.client.post("/api/v1/sessions/1:2/controls", headers=self.headers,
+        response = await self.client.post("/api/v1/sessions/1/controls", headers=self.headers,
                                           json={"action": "volume", "volume": 50})
         self.assertEqual(response.status, 202)
         identifier = (await response.json())["id"]
@@ -156,17 +156,17 @@ class ApiTests(StorageFixture, unittest.IsolatedAsyncioTestCase):
                                          json={"enabled": False, "level": "low", "model": "small"})
         self.assertEqual(response.status, 200)
         self.assertFalse((await response.json())["applied"])
-        response = await self.client.post("/api/v1/sessions/1:2/controls", headers=self.headers, json=[])
+        response = await self.client.post("/api/v1/sessions/1/controls", headers=self.headers, json=[])
         self.assertEqual(response.status, 400)
         response = await self.client.get("/api/v1/logs?limit=99999", headers=self.headers)
         self.assertEqual(response.status, 400)
         self.assertIn("error", await response.json())
 
     async def test_cross_origin_writes_are_rejected(self):
-        response = await self.client.post("/api/v1/sessions/1:2/controls",
+        response = await self.client.post("/api/v1/sessions/1/controls",
             headers=dict(self.headers, Origin="https://example.com"), json={"action": "skip"})
         self.assertEqual(response.status, 403)
-        response = await self.client.post("/api/v1/sessions/1:2/controls", json={"action": "skip"})
+        response = await self.client.post("/api/v1/sessions/1/controls", json={"action": "skip"})
         self.assertEqual(response.status, 403)
 
     async def test_guild_settings_are_independent_and_survive_repository_reload(self):

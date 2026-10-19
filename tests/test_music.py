@@ -45,7 +45,51 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.ctx = SimpleNamespace(author=SimpleNamespace(id=3, voice=SimpleNamespace(channel=self.channel)),
                                    guild=self.guild, channel=SimpleNamespace(id=4), send=AsyncMock())
         self.session = ChannelSession(vc=self.vc, guild_id=1, channel_id=2)
-        self.service.sessions["1:2"] = self.session
+        self.service.sessions["1"] = self.session
+
+    async def test_failed_checkpoint_does_not_stop_other_guilds_or_next_interval(self):
+        from bot_app.application.diagnostics import log_identity
+        self.service.checkpoint_task.cancel()
+        await asyncio.gather(self.service.checkpoint_task, return_exceptions=True)
+        other = ChannelSession(guild_id=8, channel_id=9)
+        self.service.sessions['8'] = other
+        self.service._persist_session = Mock()
+        visited = []
+        async def check(session):
+            visited.append(log_identity.get())
+            if len(visited) == 1:
+                raise RuntimeError('timer check failed')
+        self.service._check_sleep = check
+        with patch('bot_app.application.music.recovery.asyncio.sleep',
+                   new_callable=AsyncMock, side_effect=[None, None, asyncio.CancelledError()]):
+            with self.assertLogs('bot_app.application.music.recovery', level='ERROR') as captured:
+                with self.assertRaises(asyncio.CancelledError):
+                    await self.service._checkpoint_loop()
+        self.assertEqual(visited, [(1, 2), (8, 9), (1, 2), (8, 9)])
+        self.assertIn('retry next interval', captured.output[0])
+        self.assertIn('Traceback', captured.output[0])
+        self.assertEqual(self.service._persist_session.call_count, 3)
+        self.assertEqual(log_identity.get(), (None, None))
+
+    async def test_voice_connection_failure_has_traceback_in_server_log(self):
+        self.session.vc = None
+        self.guild.voice_client = None
+        self.channel.connect = AsyncMock(side_effect=RuntimeError('handshake failed'))
+        with self.assertLogs('bot_app.application.music.playback', level='WARNING') as captured:
+            self.assertIsNone(await self.service._ensure_connected(self.ctx, self.channel, self.session))
+        self.assertIn('Voice connection failed', captured.output[0])
+        self.assertIn('Traceback', captured.output[0])
+        self.assertEqual((captured.records[0].guild_id, captured.records[0].channel_id), (1, 2))
+        self.ctx.send.assert_awaited_once()
+
+    async def test_failed_search_is_logged_as_well_as_replied_to_user(self):
+        self.service.run_media = AsyncMock(side_effect=RuntimeError('search backend failed'))
+        with self.assertLogs('bot_app.application.music.commands', level='WARNING') as captured:
+            await self.service.dispatch('play', self.ctx, 'search query')
+        self.assertIn('Track search failed', captured.output[0])
+        self.assertIn('Traceback', captured.output[0])
+        self.assertEqual((captured.records[0].guild_id, captured.records[0].channel_id), (1, 2))
+        self.ctx.send.assert_awaited_with('❌ Search failed:search backend failed')
 
     async def test_empty_play_uses_default_playlist_and_explicit_url_is_preserved(self):
         default = "https://music.youtube.com/playlist?list=PLH6zD0MCw2r4"
@@ -81,7 +125,7 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
                 self.vc.play.assert_not_called()
                 self.service.play_next.assert_not_awaited()
                 self.presenter._refresh_now_playing_panel.assert_awaited_with(self.session)
-                self.service._start_predownload_task.assert_called_with("1:2")
+                self.service._start_predownload_task.assert_called_with("1")
                 saved = self.service.queue_repository.save.call_args.args[1]
                 self.assertEqual([track["title"] for track in saved["tracks"]],
                                  ["current", "priority", "first", "second"])
@@ -204,12 +248,12 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(self.service.dispatch("playtop", self.ctx, "priority"))
         try:
             await asyncio.wait_for(entered.wait(), 1)
-            await asyncio.wait_for(self.service.execute_control({"action": "stop", "session_id": "1:2"}), 1)
+            await asyncio.wait_for(self.service.execute_control({"action": "stop", "session_id": "1"}), 1)
         finally:
             release.set()
             await task
         self.assertEqual(self.session.queue, [])
-        self.assertNotIn("1:2", self.service.sessions)
+        self.assertNotIn("1", self.service.sessions)
 
     async def test_seek_preserves_song_queue_and_ignores_old_callback(self):
         path = Path(self.tmp.name) / "audio.mp3"
@@ -224,9 +268,9 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         for paused in (False, True):
             self.vc.is_paused.return_value = paused
             old_id = self.session.playback_id
-            await self.service.execute_control({"action": "seek", "session_id": "1:2", "position": "1:30"})
+            await self.service.execute_control({"action": "seek", "session_id": "1", "position": "1:30"})
             self.audio.create_source.assert_called_with(path, 40, position=90)
-            await self.service._after_playback("1:2", self.session, current, self.session.generation, None, old_id)
+            await self.service._after_playback("1", self.session, current, self.session.generation, None, old_id)
             self.assertIs(self.session.current_song, current)
             self.assertEqual(self.session.queue, [queued])
             self.assertEqual(current.local_path, path)
@@ -240,13 +284,13 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         from bot_app.domain.control import validate_control
         for position in ("-1", "1:60", "abc", True, None, "90000"):
             with self.subTest(position=position), self.assertRaises(ValueError):
-                validate_control({"action": "seek", "session_id": "1:2", "position": position})
+                validate_control({"action": "seek", "session_id": "1", "position": position})
         with self.assertRaises(ValueError):
-            await self.service.execute_control({"action": "seek", "session_id": "1:2", "position": 90})
+            await self.service.execute_control({"action": "seek", "session_id": "1", "position": 90})
         self.session.current_song = song()
         self.session.current_song.duration = 60
         with self.assertRaises(ValueError):
-            await self.service.execute_control({"action": "seek", "session_id": "1:2", "position": 90})
+            await self.service.execute_control({"action": "seek", "session_id": "1", "position": 90})
         self.vc.stop.assert_not_called()
 
     async def test_guild_specific_playlist_and_volume(self):
@@ -261,8 +305,9 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.service._queue_collection_input = AsyncMock()
         await self.service.dispatch("play", self.ctx, None)
         self.service._queue_collection_input.assert_awaited_with(self.ctx, custom, self.channel, self.session, front=False)
-        for guild_id, volume in ((1, 17), (2, 63)):
-            channel = SimpleNamespace(id=99, guild=SimpleNamespace(id=guild_id))
+        # Changing defaults does not replace the existing server player's volume.
+        for guild_id, volume in ((1, 40), (2, 63)):
+            channel = SimpleNamespace(id=99, guild=SimpleNamespace(id=guild_id, voice_client=None))
             self.assertEqual(self.service._get_session(channel).volume, volume)
         self.assertNotEqual(self.service.settings_for(2)["default_playlist_url"], custom)
 
@@ -275,7 +320,7 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.service._download_song_limited = AsyncMock(side_effect=[RuntimeError("HTTP 403"), path])
         self.service._get_text_channel = Mock(return_value=SimpleNamespace(send=AsyncMock()))
         self.service._start_predownload_task = Mock()
-        await self.service.play_next("1:2")
+        await self.service.play_next("1")
         self.assertIs(self.session.current_song, second)
         self.assertIsNone(self.session.preparing_song)
         self.assertEqual(self.session.queue, [])
@@ -291,28 +336,28 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.service._queue_collection_input.assert_not_awaited()
 
     async def test_desktop_skip_and_discord_skip_use_playback(self):
-        await self.service.execute_control({"action": "skip", "session_id": "1:2"})
+        await self.service.execute_control({"action": "skip", "session_id": "1"})
         self.vc.stop.assert_called_once()
         self.vc.stop.reset_mock()
         await self.service.dispatch("skip", self.ctx)
         self.vc.stop.assert_called_once()
 
     async def test_volume_loop_pause_and_resume_controls(self):
-        await self.service.execute_control({"action":"volume", "session_id":"1:2", "volume":65})
+        await self.service.execute_control({"action":"volume", "session_id":"1", "volume":65})
         self.audio.set_volume.assert_called_with(self.vc, 65)
-        await self.service.execute_control({"action":"loop", "session_id":"1:2", "mode":"queue"})
+        await self.service.execute_control({"action":"loop", "session_id":"1", "mode":"queue"})
         self.assertEqual(self.session.loop_mode, "queue")
-        await self.service.execute_control({"action":"pause", "session_id":"1:2"})
+        await self.service.execute_control({"action":"pause", "session_id":"1"})
         self.vc.pause.assert_called_once()
         self.vc.is_paused.return_value = True
-        await self.service.execute_control({"action":"resume", "session_id":"1:2"})
+        await self.service.execute_control({"action":"resume", "session_id":"1"})
         self.vc.resume.assert_called_once()
 
     async def test_clear_preserves_current_and_cancels_queued_downloads(self):
         current, queued = song("current"), song("queued", True)
         self.session.current_song = current
         self.session.queue = [queued]
-        await self.service.execute_control({"action":"clear", "session_id":"1:2"})
+        await self.service.execute_control({"action":"clear", "session_id":"1"})
         self.assertIs(self.session.current_song, current)
         self.assertEqual(self.session.queue, [])
         self.assertTrue(queued.cancel_event.is_set())
@@ -321,16 +366,16 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         current = song()
         self.session.current_song = current
         generation = self.session.generation
-        await self.service.execute_control({"action":"stop", "session_id":"1:2"})
+        await self.service.execute_control({"action":"stop", "session_id":"1"})
         self.assertTrue(self.session.stopped)
-        self.assertNotIn("1:2", self.service.sessions)
+        self.assertNotIn("1", self.service.sessions)
         self.service.play_next = AsyncMock()
-        await self.service._after_playback("1:2", self.session, current, generation, None)
+        await self.service._after_playback("1", self.session, current, generation, None)
         self.service.play_next.assert_not_awaited()
 
     async def test_control_lock_serializes_desktop_and_discord_mutations(self):
         await self.session.control_lock.acquire()
-        desktop = asyncio.create_task(self.service.execute_control({"action":"volume", "session_id":"1:2", "volume":20}))
+        desktop = asyncio.create_task(self.service.execute_control({"action":"volume", "session_id":"1", "volume":20}))
         discord = asyncio.create_task(self.service.dispatch("volume", self.ctx, 30))
         await asyncio.sleep(0)
         self.assertFalse(desktop.done())
@@ -378,11 +423,11 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         try:
             while not entered.is_set():
                 await asyncio.sleep(0.01)
-            await self.service.execute_control({"action":"stop", "session_id":"1:2"})
+            await self.service.execute_control({"action":"stop", "session_id":"1"})
             release.set()
             await task
             self.assertEqual(self.session.queue, [])
-            self.assertNotIn("1:2", self.service.sessions)
+            self.assertNotIn("1", self.service.sessions)
         finally:
             release.set()
 
@@ -412,7 +457,7 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         await self.service.dispatch("skip", self.ctx)
         self.assertTrue(current.suppress_repeat)
         self.service.play_next = AsyncMock()
-        await self.service._after_playback("1:2", self.session, current, 0, None)
+        await self.service._after_playback("1", self.session, current, 0, None)
         self.assertEqual(self.session.queue, [])
         self.assertEqual(self.session.history[0]["title"], "current")
 
@@ -420,10 +465,10 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.session.queue = [song("one"), song("two"), song("three")]
         self.service._start_predownload_task = Mock()
         version = self.service._queue_version(self.session)
-        await self.service.execute_control({"action":"nextup", "session_id":"1:2", "index":3, "queue_version":version})
+        await self.service.execute_control({"action":"nextup", "session_id":"1", "index":3, "queue_version":version})
         self.assertEqual([s.title for s in self.session.queue], ["three", "one", "two"])
         with self.assertRaisesRegex(ValueError, "queue changed"):
-            await self.service.execute_control({"action":"remove", "session_id":"1:2", "index":1, "queue_version":version})
+            await self.service.execute_control({"action":"remove", "session_id":"1", "index":1, "queue_version":version})
         self.assertEqual(len(self.session.queue), 3)
 
     async def test_fair_queue_dedupe_and_surprise_never_interrupt_current(self):
@@ -491,10 +536,305 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.session.sleep_until)
         self.assertEqual(len(self.session.queue), 1)
         self.vc.is_playing.return_value = False
-        await self.service.play_next("1:2")
+        await self.service.play_next("1")
         self.assertEqual(len(self.session.queue), 1)
         self.service._resume_session(self.session)
         self.assertFalse(self.session.sleeping)
+
+    async def test_sdk_voice_reconnect_does_not_retire_or_disconnect_session(self):
+        self.session.current_song = song("current")
+        self.session.queue = [song("next")]
+        self.session.position_seconds = 42
+        self.vc.is_connected.return_value = False
+        before, after = SimpleNamespace(channel=self.channel), SimpleNamespace(channel=None)
+        with self.assertLogs("bot_app.application.music.sessions", level="INFO") as logs:
+            await self.service.on_voice_state_update(self.bot.user, before, after)
+            task = self.session.voice_recovery_task
+            self.assertIsNotNone(task)
+            self.service._cleanup_dead_vc(self.session)
+            self.assertIs(self.session.vc, self.vc)
+            self.vc.disconnect.assert_not_awaited()
+            self.vc.is_connected.return_value = True
+            await task
+        self.assertIs(self.service.sessions["1"], self.session)
+        self.assertFalse(self.session.stopped)
+        self.assertEqual(self.session.current_song.title, "current")
+        self.assertEqual(len(self.session.queue), 1)
+        self.assertTrue(any("recovered after" in line for line in logs.output))
+        self.vc.disconnect.assert_not_awaited()
+
+    async def test_status_does_not_rekey_a_session_when_voice_client_moves(self):
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        self.vc.channel = other
+        self.service._write_music_status(self.session)
+        self.assertEqual(self.session.channel_id, 5)
+        self.assertIs(self.service.sessions["1"], self.session)
+        self.assertEqual(self.runtime.write_music_session.call_args.args[0], "1")
+
+    async def test_external_channel_move_keeps_player_audio_queue_and_controls(self):
+        self.session.current_song = current = song("current")
+        self.session.position_seconds = 42
+        self.session.queue = [song("next")]
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        self.session.volume = 63
+        self.session.loop_mode = "queue"
+        self.session.panel_message_id = 123
+        self.vc.channel = other
+        await self.service.on_voice_state_update(self.bot.user,
+            SimpleNamespace(channel=self.channel), SimpleNamespace(channel=other))
+        self.assertEqual(list(self.service.sessions), ["1"])
+        self.assertIs(self.service.sessions["1"], self.session)
+        self.assertIs(self.session.current_song, current)
+        self.assertEqual([item.title for item in self.session.queue], ["next"])
+        self.assertEqual((self.session.position_seconds, self.session.volume, self.session.loop_mode), (42, 63, "queue"))
+        self.assertEqual((self.session.channel_id, self.session.panel_message_id), (5, 123))
+        self.vc.stop.assert_not_called()
+        self.vc.disconnect.assert_not_awaited()
+        self.ctx.author.voice.channel = other
+        await self.service.dispatch("volume", self.ctx, 65)
+        self.audio.set_volume.assert_called_with(self.vc, 65)
+
+    async def test_other_channel_commands_cannot_modify_shared_queue_or_playback(self):
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        self.ctx.author.voice.channel = other
+        self.session.queue = [song("waiting")]
+        for action, args in (("stop", ()), ("skip", ()), ("pause", ()), ("clear", ()),
+                             ("volume", (90,)), ("loop", ("one",)), ("play", ("test",))):
+            await self.service.dispatch(action, self.ctx, *args)
+        self.assertEqual([item.title for item in self.session.queue], ["waiting"])
+        self.assertEqual(self.session.loop_mode, "off")
+        self.audio.set_volume.assert_not_called()
+        self.vc.pause.assert_not_called()
+        self.vc.stop.assert_not_called()
+        self.vc.disconnect.assert_not_awaited()
+        self.assertEqual(list(self.service.sessions), ["1"])
+
+    async def test_stopping_after_a_move_clears_the_servers_only_queue(self):
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        self.vc.channel = other
+        self.ctx.author.voice.channel = other
+        self.session.queue = [song("waiting")]
+        await self.service.dispatch("stop", self.ctx)
+        self.vc.stop.assert_called_once()
+        self.vc.disconnect.assert_awaited_once()
+        self.assertFalse(self.service.sessions)
+
+    async def test_join_before_move_event_preserves_audio_and_player(self):
+        self.session.current_song = current = song("current")
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        self.vc.channel = other
+        self.ctx.author.voice.channel = other
+        await self.service.dispatch("join", self.ctx)
+        self.assertIs(self.service.sessions["1"], self.session)
+        self.assertIs(self.session.current_song, current)
+        self.vc.stop.assert_not_called()
+        self.vc.disconnect.assert_not_awaited()
+        await self.service.on_voice_state_update(self.bot.user,
+            SimpleNamespace(channel=self.channel), SimpleNamespace(channel=other))
+        self.vc.stop.assert_not_called()
+
+    async def test_delayed_channel_move_event_cannot_bind_a_newer_connection_location(self):
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        latest = SimpleNamespace(id=6, name="latest voice", guild=self.guild, members=[])
+        self.session.current_song = song("current")
+        self.vc.channel = latest
+        await self.service.on_voice_state_update(self.bot.user,
+            SimpleNamespace(channel=self.channel), SimpleNamespace(channel=other))
+        self.assertNotIn("1:5", self.service.sessions)
+        self.assertIs(self.service.sessions["1"], self.session)
+        self.assertIs(self.session.vc.channel, latest)
+        self.vc.stop.assert_not_called()
+        self.vc.disconnect.assert_not_awaited()
+
+    async def test_channel_move_round_trip_preserves_one_queue_and_playback_callback(self):
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        self.session.current_song = current = song("current")
+        self.session.queue = [song("next")]
+        async def move_to(channel):
+            before = self.vc.channel
+            self.vc.channel = channel
+            self.service._spawn(self.service.on_voice_state_update(self.bot.user,
+                SimpleNamespace(channel=before), SimpleNamespace(channel=channel)))
+        self.vc.move_to = AsyncMock(side_effect=move_to)
+        for channel in (other, self.channel, other, self.channel):
+            self.ctx.author.voice.channel = channel
+            await self.service.dispatch("join", self.ctx)
+            await asyncio.sleep(0)
+            self.assertIs(self.service.sessions[self.service._channel_key(channel)].vc, self.vc)
+            self.assertEqual(list(self.service.sessions), ["1"])
+            self.assertIs(self.service.sessions["1"], self.session)
+            self.assertIs(self.session.current_song, current)
+            self.assertEqual([item.title for item in self.session.queue], ["next"])
+        self.vc.stop.assert_not_called()
+        self.vc.disconnect.assert_not_awaited()
+        self.service.play_next = AsyncMock()
+        await self.service._after_playback("1", self.session, current, 0, None)
+        self.assertEqual(self.session.history[0]["title"], "current")
+        self.service.play_next.assert_awaited_once_with("1")
+
+    async def test_another_channel_cannot_connect_during_guild_voice_recovery(self):
+        self.vc.is_connected.return_value = False
+        await self.service.on_voice_state_update(self.bot.user,
+            SimpleNamespace(channel=self.channel), SimpleNamespace(channel=None))
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[], connect=AsyncMock())
+        target = self.service._get_session(other)
+        self.assertIsNone(await self.service._ensure_connected(self.ctx, other, target))
+        other.connect.assert_not_awaited()
+        self.ctx.send.assert_awaited_with("Voice is reconnecting. Please retry in a moment.")
+
+    async def test_failed_join_move_keeps_existing_track_queue_and_location(self):
+        self.session.current_song = current = song("current")
+        self.session.queue = [song("next")]
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        self.ctx.author.voice.channel = other
+        self.vc.move_to = AsyncMock(side_effect=RuntimeError("move rejected"))
+        with self.assertLogs("bot_app.application.music.playback", level="WARNING"):
+            await self.service.dispatch("join", self.ctx)
+        self.assertIs(self.service.sessions["1"], self.session)
+        self.assertEqual(self.session.channel_id, 2)
+        self.assertIs(self.session.current_song, current)
+        self.assertEqual([item.title for item in self.session.queue], ["next"])
+        self.vc.stop.assert_not_called()
+        self.vc.disconnect.assert_not_awaited()
+
+    async def test_disconnected_server_queue_can_resume_in_another_voice_channel(self):
+        self.session.vc = None
+        self.session.restored = True
+        self.session.queue = [song("saved")]
+        self.session.queue[0].resume_at = 73
+        self.guild.voice_client = None
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        async def connect(**kwargs):
+            self.guild.voice_client = self.vc
+            self.vc.channel = other
+            return self.vc
+        other.connect = AsyncMock(side_effect=connect)
+        self.ctx.author.voice.channel = other
+        self.service.play_next = AsyncMock()
+        await self.service.dispatch("resume", self.ctx)
+        await asyncio.sleep(0)
+        self.assertEqual(list(self.service.sessions), ["1"])
+        self.assertIs(self.service.sessions["1"], self.session)
+        self.assertEqual((self.session.channel_id, self.session.queue[0].resume_at), (5, 73))
+        self.service.play_next.assert_awaited_once_with("1")
+
+    async def test_paused_channel_move_retains_pause_position_and_server_isolation(self):
+        self.session.current_song = current = song("paused")
+        self.session.paused_since = 123
+        self.session.position_seconds = 73
+        self.vc.is_playing.return_value = False
+        self.vc.is_paused.return_value = True
+        other_guild = ChannelSession(guild_id=8, channel_id=9, queue=[song("other server")])
+        self.service.sessions["8"] = other_guild
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        self.vc.channel = other
+        await self.service.on_voice_state_update(self.bot.user,
+            SimpleNamespace(channel=self.channel), SimpleNamespace(channel=other))
+        self.assertIs(self.session.current_song, current)
+        self.assertEqual((self.session.paused_since, self.service.position(self.session)), (123, 73))
+        self.assertIs(self.service.sessions["8"], other_guild)
+        self.assertEqual([item.title for item in other_guild.queue], ["other server"])
+        self.vc.stop.assert_not_called()
+        self.vc.resume.assert_not_called()
+
+    async def test_concurrent_joins_create_only_one_server_queue_and_connection(self):
+        self.service.sessions.clear()
+        self.guild.voice_client = None
+        other = SimpleNamespace(id=5, name="other voice", guild=self.guild, members=[])
+        other_ctx = SimpleNamespace(guild=self.guild, channel=self.ctx.channel, send=AsyncMock(),
+            author=SimpleNamespace(id=6, voice=SimpleNamespace(channel=other)))
+        async def connect(**kwargs):
+            await asyncio.sleep(0)
+            self.vc.channel = self.channel
+            self.guild.voice_client = self.vc
+            return self.vc
+        async def move_to(channel):
+            self.vc.channel = channel
+        self.channel.connect = AsyncMock(side_effect=connect)
+        other.connect = AsyncMock()
+        self.vc.move_to = AsyncMock(side_effect=move_to)
+        await asyncio.gather(self.service.dispatch("join", self.ctx), self.service.dispatch("join", other_ctx))
+        self.assertEqual(list(self.service.sessions), ["1"])
+        self.channel.connect.assert_awaited_once()
+        other.connect.assert_not_awaited()
+        self.assertIs(self.service.sessions["1"].vc, self.vc)
+        self.assertEqual(self.service.sessions["1"].channel_id, 5)
+
+    async def test_failed_voice_recovery_preserves_queue_and_frozen_position(self):
+        from bot_app.infrastructure.persistence.queues import QueueRepository
+        self.service.queue_repository = QueueRepository(Path(self.tmp.name) / "queues")
+        self.session.current_song = song("current")
+        self.session.position_seconds = 42
+        self.session.queue = [song("next")]
+        self.vc.is_connected.return_value = False
+        self.vc.is_playing.return_value = False
+        with patch("bot_app.application.music.sessions.VOICE_RECOVERY_TIMEOUT_SECONDS", 0):
+            with self.assertLogs("bot_app.application.music.sessions", level="INFO") as logs:
+                await self.service.on_voice_state_update(self.bot.user,
+                    SimpleNamespace(channel=self.channel), SimpleNamespace(channel=None))
+                await self.session.voice_recovery_task
+        parked = self.service.sessions["1"]
+        self.assertTrue(parked.restored)
+        self.assertIsNone(parked.vc)
+        self.assertEqual([s.title for s in parked.queue], ["current", "next"])
+        self.assertEqual(parked.queue[0].resume_at, 42)
+        self.assertEqual(self.service.queue_repository.load()["1"]["tracks"][0]["resume_at"], 42)
+        self.assertTrue(any("timed out" in line for line in logs.output))
+        self.assertTrue(any("Voice session ending" in line for line in logs.output))
+
+    async def test_stop_cancels_pending_recovery_and_does_not_restore_queue(self):
+        self.session.current_song = song("current")
+        self.vc.is_connected.return_value = False
+        await self.service.on_voice_state_update(self.bot.user,
+            SimpleNamespace(channel=self.channel), SimpleNamespace(channel=None))
+        task = self.session.voice_recovery_task
+        await self.service._dispose_session("1")
+        self.assertTrue(task.cancelled())
+        self.assertNotIn("1", self.service.sessions)
+
+    async def test_audio_callback_during_reconnect_keeps_current_track(self):
+        current = self.session.current_song = song("current")
+        self.vc.is_connected.return_value = False
+        await self.service.on_voice_state_update(self.bot.user,
+            SimpleNamespace(channel=self.channel), SimpleNamespace(channel=None))
+        await self.service._after_playback("1", self.session, current, self.session.generation, None)
+        self.assertIs(self.session.current_song, current)
+        self.assertEqual(self.session.history, [])
+        self.ctx.send.reset_mock()
+        self.assertIsNone(await self.service._ensure_connected(self.ctx, self.channel, self.session))
+        self.ctx.send.assert_awaited_once_with("Voice is reconnecting. Please retry in a moment.")
+
+    async def test_recovery_restarts_audio_that_ended_during_handshake(self):
+        current = self.session.current_song = song("current")
+        self.session.position_seconds = 42
+        self.session.queue = [song("next")]
+        self.vc.is_connected.return_value = False
+        self.vc.is_playing.return_value = False
+        self.service.play_next = AsyncMock()
+        await self.service.on_voice_state_update(self.bot.user,
+            SimpleNamespace(channel=self.channel), SimpleNamespace(channel=None))
+        task = self.session.voice_recovery_task
+        self.vc.is_connected.return_value = True
+        await task
+        await asyncio.sleep(0)
+        self.assertEqual([s.title for s in self.session.queue], ["current", "next"])
+        self.assertEqual(current.resume_at, 42)
+        self.assertIsNone(self.session.current_song)
+        self.assertEqual(self.session.playback_id, 1)
+        self.service.play_next.assert_awaited_once_with("1")
+        # The old player's callback must not consume or delete the replayed track.
+        await self.service._after_playback("1", self.session, current, self.session.generation, None, 0)
+        self.assertEqual(self.session.history, [])
+
+    async def test_recovered_paused_track_stays_paused_when_audio_restarts(self):
+        current = self.session.current_song = song("current")
+        self.session.paused_since = 100
+        self.vc.is_playing.return_value = False
+        self.vc.is_paused.return_value = False
+        await self.service._play_local_file(self.vc, self.media.music_dir / "current.mp3", "1", current)
+        self.vc.pause.assert_called_once()
+        self.assertIsNone(self.session.playing_since)
+        self.assertEqual(self.session.paused_since, 100)
 
     async def test_paused_disconnect_after_ten_minutes_preserves_position(self):
         from bot_app.infrastructure.persistence.queues import QueueRepository
@@ -506,17 +846,17 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.vc.is_playing.return_value = False
         self.vc.is_paused.return_value = True
         with patch("bot_app.application.music.sessions.asyncio.sleep", new_callable=AsyncMock), patch("bot_app.application.music.sessions.time.monotonic", return_value=700):
-            await self.service._idle_watch_loop("1:2")
-        parked = self.service.sessions["1:2"]
+            await self.service._idle_watch_loop("1")
+        parked = self.service.sessions["1"]
         self.assertIsNot(parked, self.session)
         self.assertTrue(parked.restored)
         self.assertIsNone(parked.vc)
         self.assertEqual([s.title for s in parked.queue], ["current", "next"])
         self.assertEqual(parked.queue[0].resume_at, 73)
         self.vc.disconnect.assert_awaited_once()
-        self.assertEqual(self.service.queue_repository.load()["1:2"]["tracks"][0]["resume_at"], 73)
+        self.assertEqual(self.service.queue_repository.load()["1"]["tracks"][0]["resume_at"], 73)
         self.service._persist_session(self.session)
-        self.assertEqual(self.service.queue_repository.load()["1:2"]["tracks"][0]["resume_at"], 73)
+        self.assertEqual(self.service.queue_repository.load()["1"]["tracks"][0]["resume_at"], 73)
 
     async def test_pause_clock_resets_on_resume(self):
         with patch("bot_app.application.music.recovery.time.monotonic", return_value=10):
@@ -535,9 +875,9 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.channel.members = [SimpleNamespace(bot=False)]
         with patch("bot_app.application.music.sessions.asyncio.sleep", new_callable=AsyncMock, side_effect=[None, asyncio.CancelledError()]), patch("bot_app.application.music.sessions.time.monotonic", return_value=699):
             with self.assertRaises(asyncio.CancelledError):
-                await self.service._idle_watch_loop("1:2")
+                await self.service._idle_watch_loop("1")
         self.vc.disconnect.assert_not_awaited()
-        self.assertIs(self.service.sessions["1:2"], self.session)
+        self.assertIs(self.service.sessions["1"], self.session)
 
     async def test_play_cannot_reuse_session_while_disconnect_is_pending(self):
         started, finish = asyncio.Event(), asyncio.Event()
@@ -546,7 +886,7 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
             await finish.wait()
         self.vc.disconnect = disconnect
         self.session.queue = [song("saved")]
-        task = asyncio.create_task(self.service._dispose_session("1:2", preserve=True))
+        task = asyncio.create_task(self.service._dispose_session("1", preserve=True))
         await started.wait()
         try:
             with self.assertRaisesRegex(ValueError, "Disconnecting"):
@@ -554,32 +894,32 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         finally:
             finish.set()
             await task
-        self.assertTrue(self.service.sessions["1:2"].restored)
-        self.assertFalse(self.service.sessions["1:2"].retiring)
+        self.assertTrue(self.service.sessions["1"].restored)
+        self.assertFalse(self.service.sessions["1"].retiring)
 
     async def test_relative_seek_uses_current_position(self):
         self.session.current_song = song("current")
         self.session.position_seconds = 45
         self.service._seek_session = AsyncMock()
         await self.service.dispatch("seek", self.ctx, "+30")
-        self.service._seek_session.assert_awaited_with("1:2", self.session, 75)
+        self.service._seek_session.assert_awaited_with("1", self.session, 75)
         await self.service.dispatch("seek", self.ctx, "-90")
-        self.service._seek_session.assert_awaited_with("1:2", self.session, 0)
+        self.service._seek_session.assert_awaited_with("1", self.session, 0)
 
     async def test_web_resume_of_saved_queue_connects_only_when_someone_is_present(self):
         self.session.vc = None
         self.session.restored = True
         self.session.queue = [song("saved")]
         self.bot.get_channel = lambda _: self.channel
-        with self.assertRaisesRegex(ValueError, "Join the original"):
-            await self.service.execute_control({"action":"resume", "session_id":"1:2"})
+        with self.assertRaisesRegex(ValueError, "Join the last"):
+            await self.service.execute_control({"action":"resume", "session_id":"1"})
         self.channel.members = [SimpleNamespace(bot=False)]
         self.service.play_next = AsyncMock()
-        await self.service.execute_control({"action":"resume", "session_id":"1:2"})
+        await self.service.execute_control({"action":"resume", "session_id":"1"})
         await asyncio.sleep(0)
         self.assertIs(self.session.vc, self.vc)
         self.assertFalse(self.session.restored)
-        self.service.play_next.assert_awaited_once_with("1:2")
+        self.service.play_next.assert_awaited_once_with("1")
 
 
 class MediaTests(unittest.TestCase):

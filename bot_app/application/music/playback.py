@@ -19,7 +19,10 @@ class PlaybackOperations:
         if song.download_error:
             raise RuntimeError(song.download_error)
         if not song.download_task or song.download_task.done():
-            song.download_task = self._spawn(self._download_once(song))
+            # Awaiters report the user-facing failure; retain worker diagnostics
+            # without also classifying an upstream/cancelled download as a bug.
+            song.download_task = self._spawn(self._download_once(song),
+                name="music.download", failure_level=logging.DEBUG)
         return await asyncio.shield(song.download_task)
 
 
@@ -61,7 +64,7 @@ class PlaybackOperations:
                 self.cache_owners.setdefault(path, set()).add(session.guild_id)
             except Exception as error:
                 if not song.cancelled:
-                    logger.debug("Preload failed: %s | %s", song.title, error)
+                    logger.debug("Preload failed: %s | %s", song.title, error, exc_info=True)
 
 
     def _start_predownload_task(self, channel_id: int):
@@ -73,18 +76,22 @@ class PlaybackOperations:
         if session.predownload_task and not session.predownload_task.done():
             return
 
-        session.predownload_task = self.bot.loop.create_task(
-            self._predownload_next_two(channel_id)
-        )
+        session.predownload_task = self._spawn(self._predownload_next_two(channel_id),
+            name=f"music.preload {channel_id}")
 
 
-    async def _ensure_connected(self, ctx, channel, session):
+    async def _ensure_connected(self, ctx, channel, session, *, move=False):
         """串行连接同一服务器；不抢占另一个频道正在使用的连接。"""
         lock = self.connection_locks.setdefault(ctx.guild.id, asyncio.Lock())
         async with lock:
             if self.closing or session.stopped or self.sessions.get(self._channel_key(channel)) is not session:
                 return None
-            self._remember_session_location(session, ctx, channel)
+            if session.voice_recovery_task and not session.voice_recovery_task.done():
+                await ctx.send("Voice is reconnecting. Please retry in a moment.")
+                return None
+            if session.retiring:
+                await ctx.send("Disconnecting from voice. Please retry in a moment.")
+                return None
             self._cleanup_dead_vc(session)
             me = getattr(ctx.guild, "me", None)
             if me:
@@ -95,14 +102,14 @@ class PlaybackOperations:
             guild_vc = ctx.guild.voice_client
             if guild_vc and guild_vc.is_connected():
                 if guild_vc.channel and guild_vc.channel.id != channel.id:
-                    old_session = self.sessions.get(self._channel_key(guild_vc.channel))
-                    if guild_vc.is_playing() or guild_vc.is_paused() or (old_session and (old_session.queue or old_session.preparing_song)):
-                        await ctx.send("Already playing in another voice channel. Use /stop there first.")
+                    if not move:
+                        await ctx.send("Join the bot's voice channel first, or use /join to move it here.")
                         return None
-                    await self._retire_guild_sessions(ctx.guild.id, channel.id)
                     try:
                         await guild_vc.move_to(channel)
                     except Exception as error:
+                        logger.warning("Voice channel move failed", exc_info=True,
+                            extra={"guild_id": ctx.guild.id, "channel_id": channel.id})
                         await ctx.send(f"❌ Could not move voice channel:{error}")
                         return None
                 session.vc = guild_vc
@@ -110,6 +117,8 @@ class PlaybackOperations:
                 try:
                     session.vc = await channel.connect(timeout=20, reconnect=True)
                 except Exception as error:
+                    logger.warning("Voice connection failed", exc_info=True,
+                        extra={"guild_id": ctx.guild.id, "channel_id": channel.id})
                     await ctx.send(f"❌ Voice connection failed:{error}")
                     return None
             if session.stopped or self.sessions.get(self._channel_key(channel)) is not session:
@@ -117,6 +126,9 @@ class PlaybackOperations:
                     await session.vc.disconnect(force=True)
                 session.vc = None
                 return None
+            if session.channel_id != channel.id:
+                session.empty_since = None
+                session.idle_since = None
             self._touch_session(session, ctx, channel)
             self._start_idle_task(self._channel_key(channel))
             self._write_music_status(session)
@@ -127,7 +139,7 @@ class PlaybackOperations:
         session = self.sessions.get(channel_id)
         if not session or session.stopped or current_song.cancelled:
             return
-        paused = paused or session.sleeping
+        paused = paused or session.sleeping or session.paused_since is not None
         if current_song.is_url:
             self.cache_owners.setdefault(file_path, set()).add(session.guild_id)
         play_generation = session.generation
@@ -144,7 +156,8 @@ class PlaybackOperations:
             # discord.py 在音频线程调用这里；所有会话操作回到事件循环。
             def schedule():
                 if not self.closing:
-                    self._spawn(self._after_playback(channel_id, session, current_song, play_generation, error, playback_id))
+                    self._spawn(self._after_playback(channel_id, session, current_song, play_generation, error, playback_id),
+                        name=f"music.after_playback {channel_id}")
             if not self.bot.loop.is_closed():
                 self.bot.loop.call_soon_threadsafe(schedule)
         session.current_song = current_song
@@ -168,6 +181,10 @@ class PlaybackOperations:
         if playback_id is not None and playback_id != session.playback_id:
             return
         active = self.sessions.get(channel_id) is session and not session.stopped and session.generation == generation
+        if active and session.current_song is song and session.voice_recovery_task and not session.voice_recovery_task.done():
+            logger.debug("Audio callback deferred during voice recovery: %s", song.title,
+                exc_info=(type(error), error, error.__traceback__) if error else None)
+            return
         if active and session.current_song is song:
             async with session.queue_lock:
                 session.history.append(track_data(song))
@@ -191,7 +208,7 @@ class PlaybackOperations:
             song.downloaded = False
             self._spawn(self._delete_file_later(path))
         if error:
-            logger.warning("音频播放失败: %s", error)
+            logger.warning("音频播放失败: %s", error, exc_info=(type(error), error, error.__traceback__))
             if active:
                 await self._safe_send(self._get_text_channel(session), "❌ Audio playback failed. Trying the next track.")
         if active:
@@ -260,6 +277,7 @@ class PlaybackOperations:
                         self._start_predownload_task(channel_id)
                         return
                     except Exception as e:
+                        logger.warning("Local playback failed: %s", song.title, exc_info=True)
                         if text_channel:
                             await self._safe_send(text_channel, f"❌ Local playback failed:{clean_media_error(e)}")
                         continue
@@ -310,7 +328,10 @@ class PlaybackOperations:
 
                 except Exception as e:
                     song.downloading = False
-                    logger.warning("Track skipped: %s | %s", song.title, clean_media_error(e))
+                    if session.stopped or song.cancelled:
+                        logger.debug("Track preparation cancelled: %s", song.title, exc_info=True)
+                        return
+                    logger.warning("Track skipped: %s | %s", song.title, clean_media_error(e), exc_info=True)
                     if text_channel:
                         await self._safe_send(text_channel, f"❌ Download or playback failed; skipped:{clean_media_error(e)}")
                     if song.local_path:

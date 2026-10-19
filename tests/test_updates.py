@@ -253,6 +253,13 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((self.root / "bot_app/obsolete.py").read_text(), "# old module")
         self.assert_preserved()
 
+    def test_supervisor_records_unexpected_child_exit_code(self):
+        (self.root / 'bot_app/main.py').write_text('raise SystemExit(42)\n')
+        with self.assertLogs('updater', level='ERROR') as captured:
+            self.assertEqual(supervise(self.root, []), 42)
+        self.assertIn('exit_code=42', captured.output[0])
+        self.assertIn('pid=', captured.output[0])
+
     def test_real_supervisor_restarts_and_rolls_back_failed_startup(self):
         for mode in ("success", "exit", "timeout"):
             success = mode == "success"

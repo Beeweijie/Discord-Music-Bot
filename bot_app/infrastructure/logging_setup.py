@@ -70,7 +70,7 @@ class ScopedLogHandler(logging.Handler):
                 path = log_path(self.root, guild, detail)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 handler = RotatingFileHandler(path, maxBytes=self.max_bytes, backupCount=self.backups, encoding="utf-8", delay=True)
-                handler.setFormatter(DetailFormatter("%(asctime)s | %(levelname)-7s | %(name)s | %(message)s", "%Y-%m-%d %H:%M:%S") if detail else self.activity_format)
+                handler.setFormatter(DetailFormatter("%(asctime)s | %(levelname)-7s | %(name)s guild=%(guild_id)s channel=%(channel_id)s | %(message)s", "%Y-%m-%d %H:%M:%S") if detail else self.activity_format)
                 pair.append(handler)
             self.routes[guild] = pair
         self.routes.move_to_end(guild)
@@ -82,6 +82,7 @@ class ScopedLogHandler(logging.Handler):
             context_guild, context_channel = log_identity.get()
             guild = getattr(record, "guild_id", context_guild)
             guild = str(int(guild)) if guild is not None else None
+            record.guild_id = guild
             log_path(self.root, guild)  # Validate before creating a directory.
             record.channel_id = getattr(record, "channel_id", context_channel)
             activity, detail = self._route(guild)
@@ -126,7 +127,24 @@ def configure_logging(root):
     logger.setLevel(logging.DEBUG)
     handler = ScopedLogHandler(root)
     logger.addHandler(handler)
-    # Handshake, heartbeat and HTTP internals are not useful activity messages.
+    # Avoid payload/token-bearing debug output, but retain connection lifecycle
+    # events so reconnect attempts have a beginning and an end.
     for name in ("discord", "aiohttp", "asyncio", "urllib3"):
         logging.getLogger(name).setLevel(logging.WARNING)
+    for name in ("discord.client", "discord.gateway", "discord.voice_state"):
+        logging.getLogger(name).setLevel(logging.INFO)
     return handler
+
+
+def configure_asyncio_logging(loop):
+    """Log unowned task/callback failures immediately, without dumping objects."""
+    previous = loop.get_exception_handler()
+    def report(_loop, context):
+        error = context.get("exception")
+        task = context.get("task") or context.get("future")
+        name = task.get_name() if callable(getattr(task, "get_name", None)) else "callback"
+        logging.getLogger("bot.asyncio").error("Unhandled async failure: %s | task=%s",
+            context.get("message", "unknown failure"), name,
+            exc_info=(type(error), error, error.__traceback__) if error else None)
+    loop.set_exception_handler(report)
+    return previous

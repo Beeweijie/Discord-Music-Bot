@@ -73,7 +73,7 @@ private VPN for remote access. Disabling HTTP does not disable the desktop UI.
 | GET | `/api/v1/sessions` | Session snapshots; Discord IDs are strings |
 | GET | `/api/v1/settings/voice_moderation` | Existing stored UI settings |
 | PUT | `/api/v1/settings/voice_moderation` | Validate and atomically save full settings |
-| POST | `/api/v1/sessions/{guild_id}:{channel_id}/controls` | HTTP 202 with command ID |
+| POST | `/api/v1/sessions/{guild_id}/controls` | HTTP 202 with command ID |
 | GET | `/api/v1/controls/{id}` | Acknowledgement; 404 if pending/expired/unknown |
 | GET | `/api/v1/logs?limit=80` | Bounded recent log lines; 1–500 lines |
 

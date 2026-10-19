@@ -55,6 +55,12 @@ function ago(value) {
   return Math.floor(elapsed/3600) + "h " + Math.floor(elapsed%3600/60) + "m ";
 }
 function entries() {return Object.entries(state.music_sessions || {});}
+function musicServers() {
+  return entries().map(([id, session]) => ({id, name:session.guild_name || id, session}));
+}
+function voiceState(s) {
+  return s.reconnecting ? "Reconnecting" : s.is_paused ? "Paused" : s.is_playing ? "Playing" : s.is_connected ? "Connected" : "Saved queue";
+}
 function emptyMarkup(compact=false) {
   return `<div class="empty ${compact ? "compact" : ""}"><h2>No playback sessions</h2><p>Join a voice channel and use <code>/play</code> in Discord. Your session will appear here.</p></div>`;
 }
@@ -70,27 +76,36 @@ function renderState() {
   $("workspace-name").textContent = (state.bot_user || "喵酱").split("#")[0];
   $("uptime").textContent = state.started_at ? ago(state.started_at) : "—";
   $("guild-count").textContent = state.guild_count ?? "—";
-  $("session-count").textContent = entries().length;
+  const servers = musicServers();
+  $("session-count").textContent = servers.filter(g => g.session.is_connected).length;
   $("latency").textContent = state.latency_ms ?? "—";
   $("updated").textContent = state.updated_at ? ago(state.updated_at)+"ago" : "Waiting for heartbeat";
   $("queue-summary").textContent = "Queued tracks: " + entries().reduce((n,[,s]) => n+(s.queue_size||0),0) + " tracks";
-  $("overview-sessions").innerHTML = entries().length ? entries().map(([id,s]) => `<a class="session-row" href="#music" data-session="${esc(id)}"><div><h3>${esc(s.current_song || "Waiting for a track")}</h3><p>${esc(s.guild_name)} · ${esc(s.channel_name)}</p></div><span class="pill">${s.is_paused ? "Paused" : s.is_playing ? "Playing" : "Idle"}</span></a>`).join("") : emptyMarkup(true);
+  $("overview-sessions").innerHTML = servers.length ? servers.map(({id, name, session:s}) => {
+    const detail = s.is_connected || s.reconnecting ? `${s.channel_name} · ${s.current_song || voiceState(s)}` : "No voice connection · Saved queue";
+    return `<a class="session-row" href="#music" data-session="${esc(id)}"><div><h3>${esc(name)}</h3><p>${esc(detail)}</p></div><span class="pill">${voiceState(s)}</span></a>`;
+  }).join("") : emptyMarkup(true);
   renderMusic();
 }
 function renderMusic() {
   const sessions = entries();
-  $("music-count").textContent = sessions.length + (sessions.length === 1 ? " session" : " sessions");
+  const servers = musicServers();
+  $("music-count").textContent = servers.length + (servers.length === 1 ? " server" : " servers");
   $("music-empty").hidden = sessions.length > 0; $("music-content").hidden = !sessions.length;
   if (!sessions.length) {selected = null; return;}
-  if (!sessions.some(([id]) => id === selected)) selected = sessions[0][0];
-  $("session-picker").innerHTML = sessions.map(([id,s]) => `<button class="${id===selected ? "selected" : ""}" data-session="${esc(id)}">${esc(s.guild_name)} / ${esc(s.channel_name)}</button>`).join("");
+  if (!sessions.some(([id]) => id === selected)) selected = (servers.find(g => g.session.is_connected || g.session.reconnecting) || servers[0]).id;
+  $("session-picker").innerHTML = servers.map(({id, name}) =>
+    `<button class="${id === selected ? "selected" : ""}" aria-pressed="${id === selected}" data-session="${esc(id)}">${esc(name)}</button>`).join("");
   const s = state.music_sessions[selected];
+  $("music-channel").textContent = (s.is_connected || s.reconnecting ? "Voice channel: " : "Last voice channel: ") + (s.channel_name || "None");
   $("track-title").textContent = s.current_song || (s.restored ? "Saved queue, ready to resume" : "Waiting for a track");
-  $("track-meta").textContent = s.restored ? "Join the original voice channel, then click Resume or use /resume in Discord." : (s.requester ? "Requested by:"+s.requester+" · " : "") + (s.is_paused ? "Paused" : s.is_playing ? "Playing" : "Idle");
+  $("track-meta").textContent = s.reconnecting ? "Reconnecting to voice. Your queue is kept." : s.restored ?
+    "Use /resume in any voice channel, or click Resume to use the last voice channel." :
+    (s.requester ? "Requested by:"+s.requester+" · " : "") + (s.is_paused ? "Paused" : s.is_playing ? "Playing" : "Idle");
   if (!$("volume-form").dataset.dirty) {$("volume").value = s.volume ?? 40; $("volume-value").textContent = $("volume").value + "%";}
   if (!$("loop-form").dataset.dirty) $("loop").value = s.loop_mode || "off";
   document.querySelector('[data-action="pause"]').hidden = !s.is_playing;
-  document.querySelector('[data-action="resume"]').hidden = !(s.is_paused || s.restored || s.sleeping || (!s.is_playing && s.queue_size));
+  document.querySelector('[data-action="resume"]').hidden = s.reconnecting || !(s.is_paused || s.restored || s.sleeping || (!s.is_playing && s.queue_size));
   document.querySelector('[data-action="skip"]').disabled = pending || !s.is_connected;
   document.querySelector('[data-action="replay"]').disabled = pending || !(s.is_playing || s.is_paused);
   for (const input of $("seek-form").querySelectorAll("input,button")) input.disabled = pending || !(s.is_playing || s.is_paused);

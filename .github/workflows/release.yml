@@ -11,7 +11,7 @@ on:
 permissions:
   contents: write
 jobs:
-  linux-update-tests:
+  linux-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,10 +23,10 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
-      - name: Verify Linux virtual environments, updates and rollback
-        run: python -m unittest discover -s tests -p test_updates.py -v
+      - name: Verify Linux queues, virtual environments, updates and rollback
+        run: python -m unittest discover -s tests -v
   release:
-    needs: linux-update-tests
+    needs: linux-tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,8 +59,17 @@ jobs:
         run: |
           gh release view $env:RELEASE_TAG
           if ($LASTEXITCODE -ne 0) {
-            gh release create $env:RELEASE_TAG --verify-tag --title "Discord Music Bot $env:RELEASE_TAG" --generate-notes
+            $notes = "docs/release-notes/$env:RELEASE_TAG.md"
+            $createArgs = @('release', 'create', $env:RELEASE_TAG, '--draft', '--verify-tag', '--title', "Discord Music Bot $env:RELEASE_TAG")
+            if (Test-Path -LiteralPath $notes) {
+              $createArgs += @('--notes-file', $notes)
+            } else {
+              $createArgs += '--generate-notes'
+            }
+            gh @createArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           $assets = @(Get-ChildItem dist -File | ForEach-Object FullName)
           gh release upload $env:RELEASE_TAG @assets --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit $env:RELEASE_TAG --draft=false

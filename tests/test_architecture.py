@@ -78,7 +78,7 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_original_panel_buttons_and_autocomplete(self):
         self.service.sessions = {}
-        panel = NowPlayingView(self.service, "1:2")
+        panel = NowPlayingView(self.service, "1")
         self.assertEqual({child.label for child in panel.children},
                          {"Queue", "Pause", "Skip", "Loop: off", "Stop & clear", "Replay", "Add song", "Favorite", "Surprise next"})
         play = self.bot.tree.get_command("play")

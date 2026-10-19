@@ -16,13 +16,11 @@ class CommandsOperations:
             await ctx.send("Join a voice channel first.")
             return
 
-        session = self._get_session(channel)
-        self._remember_session_location(session, ctx, channel)
-        self._touch_session(session, ctx, channel)
+        session = self._get_session(channel, allow_move=True)
         session.last_text_channel_id = ctx.channel.id
         session.stopped = False
 
-        vc = await self._ensure_connected(ctx, channel, session)
+        vc = await self._ensure_connected(ctx, channel, session, move=True)
         if not vc:
             return
 
@@ -120,6 +118,8 @@ class CommandsOperations:
                 await self.play_next(self._channel_key(channel))
 
         except Exception as e:
+            logger.warning("Playlist load failed", exc_info=True,
+                extra={"guild_id": ctx.guild.id, "channel_id": channel.id})
             await ctx.send(f"❌ Could not load playlist:{e}")
 
 
@@ -182,6 +182,8 @@ class CommandsOperations:
                     ctx.author,
                 )
             except Exception as e:
+                logger.warning("Track search failed", exc_info=True,
+                    extra={"guild_id": ctx.guild.id, "channel_id": channel.id})
                 await ctx.send(f"❌ Search failed:{e}")
                 return
         else:
@@ -336,7 +338,7 @@ class CommandsOperations:
             await ctx.send("Join a voice channel first.")
             return
 
-        session = self.sessions.get(self._channel_key(channel))
+        session = self._get_existing_session(ctx)
         if not session or not session.queue:
             await ctx.send("The queue is already empty.")
             return

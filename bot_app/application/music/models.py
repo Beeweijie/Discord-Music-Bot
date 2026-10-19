@@ -21,7 +21,7 @@ class Song(Track):
 
 @dataclass
 class ChannelSession:
-    """一个语音频道对应一个播放会话。"""
+    """One server's player; channel_id is its current or last voice location."""
 
     queue: List[Song] = field(default_factory=list)
     vc: Optional[VoiceConnection] = None
@@ -32,6 +32,7 @@ class ChannelSession:
     panel_message_id: Optional[int] = None
     predownload_task: Optional[asyncio.Task] = None
     idle_task: Optional[asyncio.Task] = None
+    voice_recovery_task: Optional[asyncio.Task] = field(default=None, repr=False, compare=False)
     volume: int = DEFAULT_VOLUME
     guild_id: Optional[int] = None
     guild_name: Optional[str] = None
@@ -51,6 +52,7 @@ class ChannelSession:
     position_seconds: float = 0
     playing_since: Optional[float] = None
     panel_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    panel_payload: Optional[tuple] = field(default=None, repr=False, compare=False)
     history: list = field(default_factory=list)
     sleep_until: Optional[float] = None
     sleeping: bool = False

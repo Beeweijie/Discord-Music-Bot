@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
-from bot_app.application.diagnostics import session_logs
+from bot_app.application.diagnostics import log_identity, session_logs
 import time
 import hashlib
 import json
@@ -11,19 +11,26 @@ from pathlib import Path
 from typing import List, Optional
 from bot_app.application.music.models import Song, ChannelSession
 from bot_app.domain.music.policies import (
-    CACHE_CLEANUP_INTERVAL_SECONDS, CACHE_DELETE_DELAY_SECONDS, IDLE_CHECK_INTERVAL_SECONDS
+    CACHE_CLEANUP_INTERVAL_SECONDS, CACHE_DELETE_DELAY_SECONDS, IDLE_CHECK_INTERVAL_SECONDS,
+    VOICE_RECOVERY_TIMEOUT_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
 
 class SessionsOperations:
-    def _spawn(self, coroutine):
-        task = self.bot.loop.create_task(coroutine)
+    def _spawn(self, coroutine, *, name=None, failure_level=logging.ERROR):
+        guild, channel = log_identity.get()
+        task = self.bot.loop.create_task(coroutine,
+            name=name or getattr(coroutine, "__qualname__", type(coroutine).__name__))
         self.background_tasks.add(task)
         def finished(done):
             self.background_tasks.discard(done)
-            if not done.cancelled() and done.exception():
-                logger.warning("音乐后台任务失败", exc_info=done.exception())
+            if not done.cancelled():
+                error = done.exception()
+                if error:
+                    logger.log(failure_level, "Background task failed: %s", done.get_name(),
+                        exc_info=(type(error), error, error.__traceback__),
+                        extra={"guild_id": guild, "channel_id": channel})
         task.add_done_callback(finished)
         return task
 
@@ -35,24 +42,25 @@ class SessionsOperations:
         return ctx.author.voice.channel
 
 
-    def _session_key(self, guild_id: int, channel_id: int) -> str:
-        """使用服务器和频道 ID 隔离会话。"""
-        return f"{guild_id}:{channel_id}"
+    def _session_key(self, guild_id: int) -> str:
+        """One player and queue per server, independent of voice location."""
+        return str(guild_id)
 
 
     def _channel_key(self, channel: object) -> str:
-        return self._session_key(channel.guild.id, channel.id)
+        return self._session_key(channel.guild.id)
 
 
     def _session_status_key(self, session: ChannelSession) -> str:
-        if session.guild_id and session.channel_id:
-            return self._session_key(session.guild_id, session.channel_id)
-        return str(session.channel_id or "unknown")
+        return self._session_key(session.guild_id) if session.guild_id else "unknown"
 
 
-    def _get_session(self, channel: object) -> ChannelSession:
-        """获取或创建语音频道的会话。"""
+    def _get_session(self, channel: object, *, allow_move=False) -> ChannelSession:
+        """Get the server player; only explicit Join may move a connected bot."""
         key = self._channel_key(channel)
+        vc = channel.guild.voice_client
+        if not allow_move and vc and vc.is_connected() and vc.channel and vc.channel.id != channel.id:
+            raise ValueError("Join the bot's voice channel first, or use /join to move it here.")
         if key in self.sessions and self.sessions[key].retiring:
             raise ValueError("Disconnecting from this channel. Please retry in a moment.")
         if key not in self.sessions:
@@ -61,15 +69,20 @@ class SessionsOperations:
 
 
     def _get_existing_session(self, ctx) -> Optional[ChannelSession]:
-        """根据用户当前语音频道取已有会话。"""
+        """Locate the server player while enforcing the live voice-channel boundary."""
         channel = self._get_user_voice_channel(ctx)
         if not channel:
+            return None
+        vc = ctx.guild.voice_client
+        if vc and vc.is_connected() and vc.channel and vc.channel.id != channel.id:
             return None
         return self.sessions.get(self._channel_key(channel))
 
 
     def _cleanup_dead_vc(self, session: ChannelSession):
         """清理已经断开的 VoiceClient 引用。"""
+        if session.voice_recovery_task and not session.voice_recovery_task.done():
+            return  # The SDK still owns this connection while reconnecting.
         if session.vc and not session.vc.is_connected():
             session.vc = None
 
@@ -97,10 +110,10 @@ class SessionsOperations:
         channel=None,
         per_user: bool = False,
     ) -> bool:
-        """按服务器和语音频道限制高频命令，避免一个服务器影响另一个服务器。"""
-        guild_id, channel_id, user_id = self._get_context_ids(ctx, channel)
+        """Rate-limit the server player; moving it cannot bypass a cooldown."""
+        guild_id, _, user_id = self._get_context_ids(ctx, channel)
         cooldown_user = user_id if per_user else 0
-        key = (guild_id, channel_id, command_name, cooldown_user)
+        key = (guild_id, command_name, cooldown_user)
         now = time.monotonic()
         if len(self.command_cooldowns) > 1000:
             self.command_cooldowns = {
@@ -133,15 +146,13 @@ class SessionsOperations:
         if ctx and ctx.guild:
             session.guild_id = ctx.guild.id
             session.guild_name = ctx.guild.name
+        if session.vc and session.vc.channel and session.vc.is_connected():
+            channel = session.vc.channel
         if channel:
+            session.guild_id = channel.guild.id
+            session.guild_name = channel.guild.name
             session.channel_id = channel.id
             session.channel_name = channel.name
-        elif session.vc and session.vc.channel:
-            session.channel_id = session.vc.channel.id
-            session.channel_name = session.vc.channel.name
-            if session.vc.guild:
-                session.guild_id = session.vc.guild.id
-                session.guild_name = session.vc.guild.name
 
 
     def _write_music_status(self, session: Optional[ChannelSession] = None):
@@ -177,6 +188,8 @@ class SessionsOperations:
                     "position_seconds": int(self.position(session)),
                     "volume": session.volume,
                     "is_connected": bool(session.vc and session.vc.is_connected()),
+                    "reconnecting": bool(session.voice_recovery_task and not session.voice_recovery_task.done()
+                        and not (session.vc and session.vc.is_connected())),
                     "is_playing": bool(session.vc and session.vc.is_playing()),
                     "is_paused": bool(session.vc and session.vc.is_paused()),
                     "human_count": human_count,
@@ -218,8 +231,16 @@ class SessionsOperations:
             if before.channel and (not after.channel or after.channel.id != before.channel.id):
                 old_key = self._channel_key(before.channel)
                 session = self.sessions.get(old_key)
-                if session and not session.stopped:
-                    await self._dispose_session(old_key, disconnect=after.channel is None, preserve=True)
+                if (session and session.vc and session.channel_id == before.channel.id
+                        and not session.stopped and not session.retiring):
+                    if after.channel is None:
+                        # discord.py leaves and rejoins during its own reconnect flow.
+                        # Disconnecting here cancels that recovery and its audio player.
+                        self._start_voice_recovery(old_key, session)
+            if after.channel and (not before.channel or after.channel.id != before.channel.id):
+                await self._bind_voice_channel(after.channel)
+                logger.info("Voice channel joined: %s", after.channel.name,
+                    extra={"guild_id": after.channel.guild.id, "channel_id": after.channel.id})
             return
         if member.bot:
             return
@@ -243,6 +264,84 @@ class SessionsOperations:
                 session.empty_since = None
 
 
+    async def _bind_voice_channel(self, channel):
+        """Bind an SDK/admin move to one session using the command connection lock."""
+        async with self.connection_locks.setdefault(channel.guild.id, asyncio.Lock()):
+            vc = channel.guild.voice_client
+            # Ignore delayed events from an earlier move or completed disconnect.
+            if (self.closing or not vc or not vc.is_connected() or not vc.channel
+                    or vc.channel.id != channel.id):
+                return
+            session = self.sessions.get(self._channel_key(channel))
+            if session and session.retiring:
+                return
+            session = self._get_session(channel)
+            if session.channel_id != channel.id:
+                session.empty_since = None
+                session.idle_since = None
+            session.vc = vc
+            self._touch_session(session, channel=channel)
+            self._start_idle_task(self._channel_key(channel))
+            self._write_music_status(session)
+            await self._refresh_now_playing_panel(session)
+
+
+    def _start_voice_recovery(self, channel_id, session):
+        if session.stopped or session.retiring or self.closing:
+            return
+        if session.voice_recovery_task and not session.voice_recovery_task.done():
+            return
+        if session.current_song:
+            session.position_seconds = self.position(session)
+            session.playing_since = None
+        logger.warning("Voice connection interrupted; allowing SDK recovery for %ss | track=%s queued=%d position=%.1fs",
+            VOICE_RECOVERY_TIMEOUT_SECONDS, getattr(session.current_song, "title", None),
+            len(session.queue), session.position_seconds,
+            extra={"guild_id": session.guild_id, "channel_id": session.channel_id})
+        session.voice_recovery_task = self._spawn(self._watch_voice_recovery(channel_id, session),
+            name=f"music.voice_recovery {channel_id}")
+        self._write_music_status(session)
+
+    @session_logs
+    async def _watch_voice_recovery(self, channel_id, session):
+        started = time.monotonic()
+        try:
+            while self.sessions.get(channel_id) is session and not session.stopped:
+                # Give the SDK's voice-state handler time to finish its transition.
+                await asyncio.sleep(1)
+                if self.sessions.get(channel_id) is not session or session.stopped:
+                    return
+                vc = session.vc
+                if (vc and vc.is_connected() and vc.channel and vc.channel.id == session.channel_id
+                        and vc.guild.voice_client is vc):
+                    logger.info("Voice connection recovered after %.1fs", time.monotonic() - started)
+                    if session.current_song and not (vc.is_playing() or vc.is_paused()):
+                        # A failed handshake may have ended the old audio thread.
+                        # Keep its track and offset, and reject its delayed callback.
+                        async with session.queue_lock:
+                            session.playback_id += 1
+                            session.current_song.resume_at = session.position_seconds
+                            session.queue.insert(0, session.current_song)
+                            session.current_song = None
+                    elif session.current_song and vc.is_playing():
+                        session.playing_since = time.monotonic()
+                    self._start_idle_task(channel_id)
+                    self._write_music_status(session)
+                    if not session.current_song and session.queue:
+                        self._spawn(self.play_next(channel_id))
+                    return
+                if time.monotonic() - started >= VOICE_RECOVERY_TIMEOUT_SECONDS:
+                    logger.warning("Voice recovery timed out after %ss; saving queue for /resume",
+                        VOICE_RECOVERY_TIMEOUT_SECONDS)
+                    await self._auto_disconnect_session(channel_id,
+                        "Voice connection was lost and did not recover. Queue saved; use /resume to continue.",
+                        preserve=True)
+                    return
+        finally:
+            if session.voice_recovery_task is asyncio.current_task():
+                session.voice_recovery_task = None
+
+
     def _start_idle_task(self, channel_id: int):
         """为当前语音频道启动自动离开检查。"""
         session = self.sessions.get(channel_id)
@@ -250,7 +349,7 @@ class SessionsOperations:
             return
         if session.idle_task and not session.idle_task.done():
             return
-        session.idle_task = self.bot.loop.create_task(self._idle_watch_loop(channel_id))
+        session.idle_task = self._spawn(self._idle_watch_loop(channel_id), name=f"music.idle {channel_id}")
 
 
     @session_logs
@@ -264,6 +363,8 @@ class SessionsOperations:
 
             vc = session.vc
             if not vc or not vc.is_connected():
+                if vc:
+                    self._start_voice_recovery(channel_id, session)
                 return
 
             now = time.monotonic()
@@ -314,17 +415,20 @@ class SessionsOperations:
         if not session:
             return
         text_channel = self._get_text_channel(session)
-        await self._dispose_session(channel_id, preserve=preserve)
+        await self._dispose_session(channel_id, preserve=preserve, reason=reason)
         if text_channel:
             await self._safe_send(text_channel, f"👋 {reason}")
 
 
     @session_logs
-    async def _dispose_session(self, channel_id: str, disconnect: bool = True, preserve=False):
+    async def _dispose_session(self, channel_id: str, disconnect: bool = True, preserve=False, reason="session stopped"):
         session = self.sessions.get(channel_id)
         if not session or session.retiring:
             return
         session.retiring = True
+        logger.info("Voice session ending: %s | preserve=%s queued=%d track=%s position=%.1fs humans=%d",
+            reason, preserve, len(session.queue), getattr(session.current_song or session.preparing_song, "title", None),
+            self.position(session), self._human_voice_count(session))
         parked = None
         if preserve:
             parked = ChannelSession(guild_id=session.guild_id, channel_id=session.channel_id,
@@ -351,14 +455,14 @@ class SessionsOperations:
         if session.current_song:
             self._cancel_song(session.current_song)
             session.current_song = None
-        tasks = [session.predownload_task, session.idle_task]
+        tasks = [session.predownload_task, session.idle_task, session.voice_recovery_task]
         for task in tasks:
             if task and task is not asyncio.current_task() and not task.done():
                 task.cancel()
         vc = session.vc
         await self._disable_now_playing_panel(session)
         try:
-            if vc:
+            if vc and vc.guild.voice_client is vc:
                 if vc.is_playing() or vc.is_paused():
                     vc.stop()
                 if disconnect:
@@ -374,20 +478,6 @@ class SessionsOperations:
             if parked and (parked.queue or parked.history):
                 self.sessions[channel_id] = parked
                 self._write_music_status(parked)
-
-
-    async def _retire_guild_sessions(self, guild_id: int, keep_channel_id: int):
-        """同一服务器切换语音频道时，清理旧频道 session，避免旧回调继续调度。"""
-        for session_key, session in list(self.sessions.items()):
-            if session.channel_id == keep_channel_id:
-                continue
-
-            vc_guild_id = session.guild_id
-            if vc_guild_id != guild_id:
-                continue
-
-            await self._dispose_session(session_key, disconnect=False, preserve=True)
-            self._log_session(session.channel_id or 0, "retired stale guild session", guild_id=guild_id)
 
 
     def _delete_file_safely(self, file_path: Optional[Path]):
@@ -458,11 +548,11 @@ class SessionsOperations:
                     except FileNotFoundError:
                         continue
                     except Exception as e:
-                        logger.warning("清理缓存文件失败: %s | %s", file_path, e)
+                        logger.warning("清理缓存文件失败: %s | %s", file_path, e, exc_info=True)
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                logger.warning("缓存清理任务异常: %s", e)
+                logger.warning("缓存清理任务异常: %s", e, exc_info=True)
 
 
     async def _control_loop(self):
@@ -474,7 +564,11 @@ class SessionsOperations:
                     try:
                         await self.execute_control(command)
                     except Exception as error:
-                        logger.warning("Dashboard %s failed: %s", command.get("action"), error, extra={"guild_id": command.get("session_id", "").split(":")[0] or None})
+                        target = self.sessions.get(command.get("session_id"))
+                        logger.warning("Dashboard %s failed: %s | command=%s session=%s", command.get("action"), error,
+                            command.get("id"), command.get("session_id"), exc_info=True,
+                            extra={"guild_id": getattr(target, "guild_id", None),
+                                   "channel_id": getattr(target, "channel_id", None)})
                         self.runtime.write_control_result(command, False, str(error))
                     else:
                         self.runtime.write_control_result(command, True, "Done.")
@@ -533,9 +627,9 @@ class SessionsOperations:
             elif session.queue:
                 channel = self.bot.get_channel(session.channel_id)
                 if not channel:
-                    raise ValueError("The original voice channel no longer exists.")
+                    raise ValueError("The last voice channel no longer exists. Use /resume in another voice channel.")
                 if not self._human_voice_count(session):
-                    raise ValueError("Join the original voice channel before resuming.")
+                    raise ValueError("Join the last voice channel before resuming here, or use /resume in another channel.")
                 class ControlContext:
                     guild = channel.guild
                     author = SimpleNamespace(voice=SimpleNamespace(channel=channel))

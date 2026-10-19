@@ -8,6 +8,12 @@ run `python -m unittest discover -s tests`. Run `python main.py --check` locally
 when configured; it does not connect to Discord. Do not start another bot against
 an active installation's data.
 
+For v1.3.0, use the [release notes](release-notes/v1.3.0.md). Verify an upgrade
+from v1.2.1 with multiple saved channel queues, including a restart after Stop.
+In a test Discord voice channel, verify playback and paused moves from A to B
+and back, controls in the destination, and rejection of controls from a different
+channel. These live voice checks supplement the mocked regression suite.
+
 Build with `python scripts/build_release.py v1.0.0`. The script uses an explicit
 allowlist and outputs a reproducible ZIP plus its SHA-256 checksum in `dist/`.
 It excludes `.env`, per-server configuration, runtime files, user libraries,
@@ -16,8 +22,9 @@ with spaces: run `install.bat`, configure a test token, and check tray startup.
 `install.bat -NoConfigure` supports dependency-only smoke tests without a token.
 
 Commit the release source, tag it as `vX.Y.Z`, and push the commit and tag. The
-Windows release workflow installs dependencies, runs the suite, builds the ZIP
-and publishes both assets to GitHub Releases. It can also be run manually against
+release workflow installs dependencies, runs the suite on Linux and Windows,
+builds the ZIP and uploads both assets to a draft before publishing it. It uses
+`docs/release-notes/<tag>.md` when present. It can also be run manually against
 an existing tag. Failed tests prevent that workflow from publishing assets.
 Never publish files by recursively zipping the working directory.
 

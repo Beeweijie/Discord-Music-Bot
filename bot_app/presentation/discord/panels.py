@@ -66,7 +66,8 @@ class AddSongModal(discord.ui.Modal, title="Add song"):
 
     async def on_submit(self, interaction):
         channel = getattr(getattr(interaction.user, "voice", None), "channel", None)
-        if not channel or self.music._channel_key(channel) != self.session_id:
+        session = self.music._get_existing_session(InteractionContext(interaction))
+        if not channel or not session or self.music._channel_key(channel) != self.session_id:
             await interaction.response.send_message("Join this player's voice channel first.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -94,7 +95,8 @@ class NowPlayingView(discord.ui.View):
         if not session or session.stopped:
             await interaction.response.send_message("This player is no longer active. Use /now to open the current player.", ephemeral=True)
             return False
-        if not channel or self.music._channel_key(channel) != self.channel_id:
+        if (not channel or self.music._channel_key(channel) != self.channel_id
+                or self.music._get_existing_session(InteractionContext(interaction)) is not session):
             await interaction.response.send_message("Join this player's voice channel first.", ephemeral=True)
             return False
         return True
@@ -262,7 +264,7 @@ class MusicPresenter:
         return None
 
     @session_logs
-    async def _update_panel(self, session, text_channel=None, disabled_reason=None):
+    async def _update_panel(self, session, text_channel=None, disabled_reason=None, force=False):
         # Build the latest song state inside the lock, so edits cannot arrive out of order.
         async with session.panel_lock:
             channel = self.bot.get_channel(session.panel_channel_id or session.last_text_channel_id) or text_channel
@@ -274,12 +276,16 @@ class MusicPresenter:
                 embed.title = "💿 " + disabled_reason
                 for item in view.children:
                     item.disabled = True
+            payload = (channel.id, session.panel_message_id, embed.to_dict(), view.to_components())
+            if not force and session.panel_payload == payload:
+                return
             try:
                 if session.panel_message_id:
                     try:
                         message = channel.get_partial_message(session.panel_message_id)
                         # Remove any GIF attachment left by the previous panel version.
                         await message.edit(embed=embed, view=view, attachments=[])
+                        session.panel_payload = payload
                         return
                     except discord.NotFound:
                         session.panel_message_id = None
@@ -289,6 +295,7 @@ class MusicPresenter:
                 message = await channel.send(embed=embed, view=view)
                 session.panel_channel_id = channel.id
                 session.panel_message_id = message.id
+                session.panel_payload = (channel.id, message.id, embed.to_dict(), view.to_components())
                 self.service._persist_session(session)
             except discord.Forbidden:
                 logger.warning("没有权限更新音乐面板，频道 %s", channel.id)
@@ -304,7 +311,7 @@ class MusicPresenter:
 
     async def _send_or_update_now_playing_panel(self, text_channel, channel_id, session):
         try:
-            await self._update_panel(session, text_channel)
+            await self._update_panel(session, text_channel, force=True)
         except Exception:
             logger.exception("更新面板失败；不影响播放，稍后重试")
 

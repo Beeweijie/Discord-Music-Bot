@@ -2,8 +2,9 @@
 import asyncio
 import logging
 import time
+from bot_app.application.diagnostics import log_scope
 from bot_app.application.music.models import ChannelSession, Song
-from bot_app.domain.music.library import TRACK_FIELDS, validate_track
+from bot_app.domain.music.library import TRACK_FIELDS, validate_track, track_key
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class RecoveryOperations:
         self._write_music_status(session)
 
     def _persist_session(self, session):
-        if self.queue_repository is None or self.closing or not session.guild_id or not session.channel_id:
+        if self.queue_repository is None or self.closing or not session.guild_id:
             return
         key = self._session_status_key(session)
         owner = getattr(self, "sessions", {}).get(key)
@@ -50,7 +51,8 @@ class RecoveryOperations:
                 tracks.append(data)
             self.queue_repository.save(key, {"tracks": tracks, "volume": session.volume,
                 "history": session.history[-100:], "sleep_until": session.sleep_until, "sleeping": session.sleeping,
-                "loop_mode": session.loop_mode, "text_channel_id": session.last_text_channel_id,
+                "loop_mode": session.loop_mode, "channel_id": session.channel_id,
+                "text_channel_id": session.last_text_channel_id,
                 "panel_channel_id": session.panel_channel_id, "panel_message_id": session.panel_message_id})
         except OSError:
             logger.exception("Queue snapshot failed", extra={"guild_id": session.guild_id, "channel_id": session.channel_id})
@@ -58,9 +60,12 @@ class RecoveryOperations:
     def restore_queues(self):
         if self.queue_repository is None:
             return
-        for key, data in self.queue_repository.load().items():
+        snapshots = self.queue_repository.load()
+        migrated = set()
+        for key, data in sorted(snapshots.items(), key=lambda item: (-item[1].get("_saved_at", 0), item[0])):
             try:
-                guild, channel = map(int, key.split(":"))
+                guild = int(key.split(":")[0])
+                channel = data.get("channel_id")
                 session = ChannelSession(guild_id=guild, channel_id=channel, restored=True)
                 volume = data.get("volume", 40)
                 if type(volume) is not int or not 0 <= volume <= 100 or data.get("loop_mode", "off") not in {"off", "one", "queue"}:
@@ -74,12 +79,12 @@ class RecoveryOperations:
                 if session.sleep_until is not None and (type(session.sleep_until) not in (int, float) or not 0 < session.sleep_until < 1e12):
                     raise ValueError("Invalid sleep deadline")
                 session.sleeping = bool(data.get("sleeping", False))
-                for field, stored in (("last_text_channel_id", "text_channel_id"), ("panel_channel_id", "panel_channel_id"), ("panel_message_id", "panel_message_id")):
+                for field, stored in (("channel_id", "channel_id"), ("last_text_channel_id", "text_channel_id"), ("panel_channel_id", "panel_channel_id"), ("panel_message_id", "panel_message_id")):
                     value = data.get(stored)
                     if value is not None and (type(value) is not int or not 0 < value < 2**64):
                         raise ValueError("Invalid channel/message ID")
                     setattr(session, field, value)
-                if not isinstance(data["tracks"], list) or len(data["tracks"]) > 1001:
+                if not isinstance(data["tracks"], list) or (":" in key and len(data["tracks"]) > 1001):
                     raise ValueError("Invalid queue length")
                 for item in data["tracks"]:
                     track = Song(**validate_track(item))
@@ -89,9 +94,23 @@ class RecoveryOperations:
                     track.resume_at = offset
                     session.queue.append(track)
                 if session.queue or session.history:
-                    self.sessions[key] = session
+                    server_key = str(guild)
+                    existing = self.sessions.get(server_key)
+                    if existing is None:
+                        self.sessions[server_key] = session
+                    else:
+                        seen = {track_key(song) for song in existing.queue}
+                        for song in session.queue:
+                            if track_key(song) not in seen:
+                                existing.queue.append(song)
+                                seen.add(track_key(song))
+                        existing.history = (session.history + existing.history)[-100:]
+                    if ":" in key:
+                        migrated.add(server_key)
             except (KeyError, ValueError, TypeError):
                 logger.exception("Invalid saved queue %s; file retained", key, extra={"guild_id": key.split(":")[0]})
+        for key in migrated:
+            self._persist_session(self.sessions[key])
 
     async def _continue_saved(self, ctx, session):
         channel = self._get_user_voice_channel(ctx)
@@ -111,14 +130,16 @@ class RecoveryOperations:
         while True:
             await asyncio.sleep(15)
             for session in list(self.sessions.values()):
-                await self._check_sleep(session)
-                if self.sessions.get(self._session_status_key(session)) is not session:
-                    continue
-                self._persist_session(session)
-                if not session.restored and not session.sleeping and not session.current_song and session.queue and session.vc and session.vc.is_connected() and not session.play_lock.locked():
-                    self._spawn(self.play_next(self._session_status_key(session)))
-                if session.current_song or session.preparing_song or session.panel_message_id:
+                with log_scope(session.guild_id, session.channel_id):
                     try:
-                        await self._refresh_now_playing_panel(session)
+                        await self._check_sleep(session)
+                        if self.sessions.get(self._session_status_key(session)) is not session:
+                            continue
+                        self._persist_session(session)
+                        if not session.restored and not session.sleeping and not session.current_song and session.queue and session.vc and session.vc.is_connected() and not session.play_lock.locked():
+                            self._spawn(self.play_next(self._session_status_key(session)),
+                                name=f"music.play_next {self._session_status_key(session)}")
+                        if session.current_song or session.preparing_song or session.panel_message_id:
+                            await self._refresh_now_playing_panel(session)
                     except Exception:
-                        logger.exception("Panel refresh failed; will retry", extra={"guild_id": session.guild_id})
+                        logger.exception("Session checkpoint failed; will retry next interval")

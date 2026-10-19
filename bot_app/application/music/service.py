@@ -40,9 +40,9 @@ class PlaybackService(RecoveryOperations, SessionsOperations, PlaybackOperations
         self.closing = False
         self.presenter.service = self
         self._cleanup_cache_dir()
-        self.cache_cleanup_task = self.bot.loop.create_task(self._cache_cleanup_loop())
-        self.control_task = self.bot.loop.create_task(self._control_loop())
-        self.checkpoint_task = self.bot.loop.create_task(self._checkpoint_loop())
+        self.cache_cleanup_task = self._spawn(self._cache_cleanup_loop(), name="music.cache_cleanup")
+        self.control_task = self._spawn(self._control_loop(), name="music.controls")
+        self.checkpoint_task = self._spawn(self._checkpoint_loop(), name="music.checkpoints")
 
     def settings_for(self, guild_id):
         if self.settings_repository is not None and guild_id is not None:
@@ -60,7 +60,7 @@ class PlaybackService(RecoveryOperations, SessionsOperations, PlaybackOperations
         self.cache_cleanup_task.cancel()
         self.control_task.cancel()
         for key in list(self.sessions):
-            await self._dispose_session(key)
+            await self._dispose_session(key, reason="bot shutdown")
         await asyncio.gather(self.cache_cleanup_task, self.control_task, self.checkpoint_task, return_exceptions=True)
         # Download tasks observe cancellation through threading.Event; wait for
         # their workers before releasing the executor or deleting their files.

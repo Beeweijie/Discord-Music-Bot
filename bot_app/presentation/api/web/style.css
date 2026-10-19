@@ -4,4 +4,5 @@
 @media(max-width:700px){.shell{display:block}.sidebar{padding:12px;border-right:0;border-bottom:1px solid #bbb}.workspace{padding:4px 8px}nav{display:flex;flex-wrap:wrap;margin-top:8px;gap:4px}nav a{padding:6px 10px}.topbar{padding:8px 12px}main{padding:12px}.music-grid,.form-grid{grid-template-columns:1fr}.page-heading{align-items:flex-start}.card{padding:12px}.status-list{grid-template-columns:110px 1fr}.status-footer,.form-footer{flex-wrap:wrap}.player-setting{gap:6px}.page-heading .muted{max-width:36ch}}
 
 .playlist-field{grid-column:1/-1}#settings-guild{max-width:500px;margin-bottom:8px}
+#music-scope{margin:6px 0 16px}.session-picker button{max-width:100%;overflow-wrap:anywhere}
 .play-controls{flex-wrap:wrap}.queue-list li{align-items:center;flex-wrap:wrap}.queue-list li>div{flex:1;min-width:140px}.queue-list button{font-size:12px;padding:4px 8px}.player-setting input:not([type=range]){min-width:0;flex:1}details>summary{cursor:pointer;font-weight:600}#history-list{padding-left:24px;overflow-wrap:anywhere}

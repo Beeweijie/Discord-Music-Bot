@@ -61,7 +61,7 @@ layers for a small feature. Use explicit imports, not wildcard imports.
 
 - `config/guilds/<guild>/music.json`: independent server settings, initialized
   from global defaults. Existing settings are not overwritten by a code upgrade.
-- `data/queues/<guild>/<voice>.json`: current/preparing track, queue, position,
+- `data/queues/<guild>/queue.json`: the server's current/preparing track, queue, position,
   volume, loop, recent history, sleep deadline and player message identity.
 - `data/library/<guild>/<user>.json`: up to 500 favorites and 20 named personal
   playlists (up to the configured queue plus one current track per playlist).
@@ -76,6 +76,32 @@ empty `/play`, or the dashboard. Checkpoints occur every 15 seconds; an abrupt
 kill can lose the latest few seconds. The 10-minute paused timeout is checked
 every 30 seconds. Timers use a wall-clock deadline so they survive restart;
 playback position and continuous pause duration use monotonic time.
+
+One bot account serves multiple guilds. Each guild has one player, one queue and
+at most one voice connection. The server ID is the stable session/control key;
+the voice channel is only its current or last location. `/join` and administrator
+moves keep the current track, queue, position, volume, repeat mode and panel.
+Other playback commands require the member to share the bot's voice channel.
+When disconnected, `/resume` can continue the server queue in any voice channel.
+Command moves and voice events share the guild connection lock. Voice recovery
+blocks new connection attempts throughout that guild until recovery finishes.
+
+Legacy `<guild>/<voice>.json` queues merge on first restore: the latest snapshot
+supplies settings, location and the first tracks; other channel tracks append
+with duplicates removed. Original files remain as backups. A server snapshot
+takes precedence thereafter, including an empty snapshot after Stop, so old
+queues cannot reappear. Migration retains existing tracks even if their combined
+count exceeds the current enqueue limit; new additions still respect that limit.
+If an update rolls back and the older bot writes newer channel snapshots, the
+next upgrade remigrates those snapshots instead of using the earlier server copy.
+
+A voice leave event can be part of discord.py's reconnect flow. Allow the SDK
+60 seconds to recover before retiring the session, freeze its playback position,
+and retain the current track if the old audio callback arrives during recovery.
+The application does not force-rejoin a kicked bot. If recovery fails, save the
+queue for explicit `/resume`; Stop and shutdown cancel the pending recovery.
+Unchanged player panels are not edited on every checkpoint; explicit `/now`
+still checks the message so a deleted panel can be recreated.
 
 History is bounded session history, not a permanent listening analytics service.
 Library snapshots save song order, not playback offsets. Playlist loading appends
@@ -104,7 +130,30 @@ Detailed files are `logs/system.debug.log` and `logs/guilds/<guild-id>/debug.log
 Each file rotates at 2 MiB with three backups. At most 32 scopes stay open.
 Identical activity messages within 60 seconds are suppressed; the next matching
 message after that interval reports the repeat count. Details retain every message.
-Discord heartbeats and routine HTTP internals are excluded. Task-local identity is
+Discord lifecycle INFO messages record voice handshakes and recovery outcomes;
+payload-bearing DEBUG messages and routine heartbeats remain excluded. Gateway
+disconnect/resume events include downtime. Session retirement records its reason,
+queue preservation, current track, position and human count. Detailed entries
+include guild/channel identity as well as full exception traces. Task-local identity is
 propagated into media worker threads; server records are never copied into System.
 The old `logs/bot.log` remains historical output and a fallback for uncaught stderr;
 its mixed historical entries are not retroactively assigned to servers.
+
+Music background tasks (checkpoints, controls, idle checks, preloads and audio
+callbacks) are tracked with task names. Unexpected task failures are logged
+immediately with their traceback and inherited guild/channel identity. Normal
+cancellation is not reported as a bug. A failed per-session checkpoint is logged
+and retried on the next interval without stopping checks for other servers.
+Search, playlist, voice connection, audio and dashboard failures retain their
+original exception traces in the detailed files, even when Discord receives a
+short error reply. Handled download failures are not duplicated as task errors.
+An event-loop exception handler catches unowned async task/callback failures.
+
+System logs identify process startup by PID and instance ID, and record requested
+shutdown and orderly exit. The supervisor records child exit codes in
+`logs/update.log`, including a child that crashes before bot logging starts.
+A power loss or forced kill cannot guarantee a final message from the bot;
+use the supervisor and host OS logs to investigate those cases. Log rotation and
+the dashboard's bounded recent-line view are not a permanent incident archive.
+Logic errors that raise no exception still require state checks, reproduction
+and regression tests; logging alone cannot detect every bug.

@@ -5,11 +5,11 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from bot_app.application.diagnostics import log_scope, log_identity
 from bot_app.application.music.service import PlaybackService
-from bot_app.infrastructure.logging_setup import ScopedLogHandler, log_path
+from bot_app.infrastructure.logging_setup import ScopedLogHandler, log_path, configure_asyncio_logging
 from bot_app.infrastructure.persistence.logs import FileLogReader
 
 
@@ -53,6 +53,7 @@ class LoggingTests(unittest.TestCase):
         detail = '\n'.join(self.reader.read(80, 1, 'DEBUG', True))
         self.assertIn('Traceback', detail)
         self.assertIn('extractor details', detail)
+        self.assertIn('guild=1 channel=None', detail)
         self.assertEqual(self.reader.read(80, 1, 'CRITICAL'), [])
 
     def test_repeated_activity_is_grouped_but_details_complete(self):
@@ -83,6 +84,69 @@ class LoggingTests(unittest.TestCase):
 
 
 class WorkerContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_run_bot_restores_async_diagnostics_after_startup_failure(self):
+        from bot_app.main import run_bot
+        class OfflineBot:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                return False
+            start = AsyncMock(side_effect=RuntimeError('startup transport failure'))
+        loop = asyncio.get_running_loop()
+        original = loop.get_exception_handler()
+        previous = Mock()
+        loop.set_exception_handler(previous)
+        try:
+            with patch.dict('os.environ', {'MANAGEMENT_API_ENABLED':'false'}), patch('bot_app.main.signal.signal'):
+                with self.assertRaisesRegex(RuntimeError, 'startup transport failure'):
+                    await run_bot(OfflineBot(), 'unused-offline-token')
+            self.assertIs(loop.get_exception_handler(), previous)
+        finally:
+            loop.set_exception_handler(original)
+
+    async def test_failed_task_is_reported_immediately_with_identity_and_traceback(self):
+        service = PlaybackService.__new__(PlaybackService)
+        service.bot = SimpleNamespace(loop=asyncio.get_running_loop())
+        service.background_tasks = set()
+        async def fail():
+            raise RuntimeError('checkpoint failure')
+        with self.assertLogs('bot_app.application.music.sessions', level='ERROR') as captured:
+            with log_scope(1, 11):
+                task = service._spawn(fail(), name='music.checkpoints')
+            with self.assertRaisesRegex(RuntimeError, 'checkpoint failure'):
+                await task
+        self.assertEqual(service.background_tasks, set())
+        record = captured.records[0]
+        self.assertEqual((record.guild_id, record.channel_id), (1, 11))
+        self.assertIn('music.checkpoints', record.getMessage())
+        self.assertIn('Traceback', captured.output[0])
+
+    async def test_cancelled_owned_task_is_not_reported_as_a_bug(self):
+        service = PlaybackService.__new__(PlaybackService)
+        service.bot = SimpleNamespace(loop=asyncio.get_running_loop())
+        service.background_tasks = set()
+        with self.assertNoLogs('bot_app.application.music.sessions', level='WARNING'):
+            task = service._spawn(asyncio.Event().wait(), name='music.idle')
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self.assertEqual(service.background_tasks, set())
+
+    async def test_unowned_async_failure_has_task_name_and_original_traceback(self):
+        loop = asyncio.get_running_loop()
+        previous = configure_asyncio_logging(loop)
+        try:
+            try:
+                raise RuntimeError('orphan failure')
+            except RuntimeError as error:
+                with self.assertLogs('bot.asyncio', level='ERROR') as captured:
+                    loop.call_exception_handler({'message':'Task failed', 'exception':error,
+                        'future':SimpleNamespace(get_name=lambda: 'unowned-task')})
+            self.assertIn('unowned-task', captured.output[0])
+            self.assertIn('Traceback', captured.output[0])
+            self.assertIn('orphan failure', captured.output[0])
+        finally:
+            loop.set_exception_handler(previous)
+
     async def test_concurrent_media_workers_keep_their_server(self):
         service = PlaybackService.__new__(PlaybackService)
         service.bot = SimpleNamespace(loop=asyncio.get_running_loop())
@@ -94,3 +158,24 @@ class WorkerContextTests(unittest.IsolatedAsyncioTestCase):
                     return await service.run_media(log_identity.get)
             self.assertEqual(await asyncio.gather(work(1), work(2)), [(1, 11), (2, 12)])
         self.assertEqual(log_identity.get(), (None, None))
+
+
+class BootstrapLoggingTests(unittest.TestCase):
+    def test_bot_construction_failure_is_logged_and_publishes_error_state(self):
+        from bot_app import main as entry
+        record = {'pid':123, 'created_at':1}
+        with patch.object(entry, 'load_dotenv'), patch.object(entry, 'startup_problems', return_value=[]), \
+             patch.object(entry, 'ProcessLock') as lock, \
+             patch.object(entry, 'is_process_record_running', return_value=False), \
+             patch.object(entry, 'read_process_record', side_effect=[None, record]), \
+             patch.object(entry, 'write_process_record', return_value=record), \
+             patch.object(entry, 'remove_process_record'), patch.object(entry, 'lower_windows_process_priority'), \
+             patch.object(entry, 'write_status') as status, \
+             patch.object(entry, 'create_bot', side_effect=RuntimeError('construction failed')), \
+             patch('bot_app.infrastructure.logging_setup.configure_logging'), patch('logging.basicConfig'):
+            with self.assertLogs('bot_app.main', level='INFO') as captured:
+                self.assertEqual(entry.main([]), 1)
+        self.assertTrue(any('Bot failed' in text and 'Traceback' in text for text in captured.output))
+        self.assertTrue(any('Bot process starting' in text for text in captured.output))
+        self.assertEqual(status.call_args.kwargs['state'], 'error')
+        lock.return_value.release.assert_called_once()

@@ -31,19 +31,21 @@
             <dt>Status</dt><dd id="hero-badge">Connecting</dd>
             <dt>Uptime</dt><dd id="uptime">—</dd>
             <dt>Servers</dt><dd id="guild-count">—</dd>
-            <dt>Music sessions</dt><dd id="session-count">—</dd>
+            <dt>Voice connections</dt><dd id="session-count">—</dd>
             <dt>Discord latency</dt><dd><span id="latency">—</span> ms</dd>
           </dl>
           <p id="hero-detail" class="muted">Loading status...</p>
           <div class="status-footer"><span id="queue-summary">Queued tracks: —</span><span id="updated">Waiting for an update</span></div>
         </section>
-        <article class="card"><div class="section-heading"><div><h2>Playback sessions</h2><p class="muted">Current playback in each voice channel</p></div><a href="#music" class="text-link">Open music controls</a></div><div id="overview-sessions"></div></article>
+        <article class="card"><div class="section-heading"><div><h2>Music by server</h2><p class="muted">Current voice connections and saved queues</p></div><a href="#music" class="text-link">Open music controls</a></div><div id="overview-sessions"></div></article>
 
       </section>
       <section id="page-music" class="page" hidden>
-        <div class="page-heading"><div><h1>Music</h1><p class="muted">Select a session to manage playback and the queue.</p></div><span id="music-count" class="pill">0 sessions</span></div>
+        <div class="page-heading"><div><h1>Music</h1><p class="muted">Select a server to manage playback and saved queues.</p></div><span id="music-count" class="pill">0 servers</span></div>
         <div id="music-empty" class="card empty"><h2>No music playing</h2><p>Join a Discord voice channel and use <code>/play</code> or <code>!play</code> to start.</p></div>
-        <div id="music-content" hidden><div id="session-picker" class="session-picker"></div>
+        <div id="music-content" hidden><div id="session-picker" class="session-picker" aria-label="Music servers"></div>
+          <p id="music-channel" class="muted" aria-live="polite"></p>
+          <p id="music-scope" class="muted">Each server has one shared queue. Moving the bot keeps the current track and queue.</p>
           <div class="music-grid"><article class="card player"><h2 id="track-title">—</h2><p id="track-meta" class="muted">—</p><div class="play-controls"><button data-action="pause" class="primary">Pause</button><button data-action="resume" class="primary">Resume</button><button data-action="skip" class="secondary">Skip</button></div>
           <form id="volume-form" class="player-setting"><label for="volume">Volume</label><input id="volume" type="range" min="0" max="100" value="40"><output id="volume-value" for="volume">40%</output><button class="secondary" type="submit">Apply</button></form>
           <form id="seek-form" class="player-setting"><label for="seek-position">Seek</label><input id="seek-position" type="text" required placeholder="m:ss, e.g. 1:30" aria-label="Seek position (m:ss or seconds)"><button class="secondary" type="submit">Seek</button></form>

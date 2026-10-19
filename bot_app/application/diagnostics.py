@@ -16,11 +16,13 @@ def log_scope(guild_id, channel_id=None):
 
 
 def session_logs(method):
-    """Scope an async method whose first argument is a session or guild:channel key."""
+    """Scope an async method whose first argument is a player or server key."""
     @wraps(method)
     async def scoped(self, session, *args, **kwargs):
-        if isinstance(session, str) and ":" in session:
-            guild, channel = session.split(":", 1)
+        if isinstance(session, str):
+            player = getattr(self, "sessions", {}).get(session)
+            guild = getattr(player, "guild_id", session.split(":", 1)[0])
+            channel = getattr(player, "channel_id", None)
         else:
             guild, channel = getattr(session, "guild_id", None), getattr(session, "channel_id", None)
         with log_scope(guild, channel):

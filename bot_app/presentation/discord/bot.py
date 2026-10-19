@@ -74,6 +74,7 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents, tree_cls=BotCommandTree,
                          allowed_mentions=discord.AllowedMentions.none())
         self.started_at = datetime.now(timezone.utc).isoformat()
+        self.disconnected_at = None
         self.management.catalog = self.guild_catalog
 
     def guild_catalog(self):
@@ -119,6 +120,9 @@ class MyBot(commands.Bot):
             logger.exception("Could not apply saved settings")
 
     async def on_ready(self):
+        if self.disconnected_at is not None:
+            logger.info("Discord gateway reconnected with a new session after %.1fs", time.monotonic() - self.disconnected_at)
+            self.disconnected_at = None
         for guild in self.guilds:
             logger.info("Server connected", extra={"guild_id": guild.id})
         music = self.get_cog("Music")
@@ -162,9 +166,15 @@ class MyBot(commands.Bot):
 
     async def on_disconnect(self):
         if not self.is_closed():
+            if self.disconnected_at is None:
+                self.disconnected_at = time.monotonic()
+                logger.warning("Discord gateway disconnected; waiting for automatic reconnect")
             write_status(state="reconnecting", latency_ms=None)
 
     async def on_resumed(self):
+        downtime = time.monotonic() - self.disconnected_at if self.disconnected_at is not None else 0
+        logger.info("Discord gateway session resumed after %.1fs", downtime)
+        self.disconnected_at = None
         write_status(state="online", latency_ms=self.latency_ms())
 
     @tasks.loop(seconds=15)
