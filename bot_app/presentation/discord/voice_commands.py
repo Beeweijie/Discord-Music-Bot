@@ -91,6 +91,9 @@ class VoiceCommands(commands.Cog):
         try:
             from bot_app.bootstrap import create_speech_recognizer, create_voice_replies, create_voice_music_search
             from bot_app.infrastructure.discord.voice_receive import SpeechVoiceClient, SpeechSink
+            # Validate the native codec before advertising a working receiver.
+            # Linux installs need libopus0 in addition to the Python packages.
+            discord.opus.Decoder()
             self.sink_class = SpeechSink
             self.recognizer = await asyncio.get_running_loop().run_in_executor(
                 self.executor, create_speech_recognizer)
@@ -104,7 +107,7 @@ class VoiceCommands(commands.Cog):
             logger.info("Local voice commands ready; say 喵酱喵酱 followed by a music command")
         except Exception:
             self.publish("error")
-            logger.exception("Voice commands could not start; check optional dependencies and VOICE_MODEL_PATH")
+            logger.exception("Voice commands could not start; check optional dependencies, Linux libopus0 and VOICE_MODEL_PATH")
 
     def publish(self, state):
         sinks = [item[1] for item in self.active.values()]

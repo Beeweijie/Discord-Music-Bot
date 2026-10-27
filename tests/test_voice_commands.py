@@ -110,6 +110,19 @@ class VoiceDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(ctx.author, self.member)
         self.assertIs(ctx.guild, self.guild)
 
+    async def test_missing_native_codec_reports_error_before_starting_receiver(self):
+        if SpeechSink is None:
+            self.skipTest('optional voice dependencies not installed')
+        import discord
+        self.cog.enabled = True
+        self.cog.publish = Mock()
+        with patch('discord.opus.Decoder', side_effect=discord.opus.OpusNotLoaded()), self.assertLogs(
+                'bot_app.presentation.discord.voice_commands', level='ERROR'):
+            await self.cog.cog_load()
+        self.cog.publish.assert_called_once_with('error')
+        self.assertIsNone(self.cog.recognizer)
+        self.assertEqual(self.cog.tasks, [])
+
     async def test_music_association_dispatches_selected_url_without_second_search(self):
         from bot_app.domain.voice_music import QueryGuess
         self.cog.music_search = Mock()
@@ -322,6 +335,8 @@ class ReceiveTests(unittest.TestCase):
         self.assertEqual(self.sink.decoded, 1)
 
     def test_crypto_transition_drops_frame_and_keeps_sink_alive(self):
+        from bot_app.infrastructure.discord.voice_receive import Speaker
+        self.sink.speakers[2] = Speaker(decoder=Mock())
         self.connection._connection.dave_session.decrypt.side_effect = RuntimeError("epoch changing")
         self.sink.write(self.user, SimpleNamespace(opus=b"encrypted"))
         self.assertEqual(self.sink.errors, 1)

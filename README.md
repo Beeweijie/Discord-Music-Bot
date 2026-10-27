@@ -23,6 +23,8 @@
 
 为增强唤醒识别，再下载 [中文读音唤醒模型](https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2)，同样解压到 `data/voice-models/`。也可通过 `VOICE_WAKE_MODEL_PATH` 指定目录。没有该模型时仍可使用文字唤醒；状态中的 `wake_detector=phonetic` 表示读音检测已经启用。额外模型约 31 MiB，使用一个 CPU 线程。
 
+Linux 还需系统 Opus 库；Debian / Ubuntu / Raspberry Pi OS 可执行 `sudo apt-get install libopus0`。缺少原生编解码库时，语音状态会显示错误并在日志中给出提示；普通音乐功能仍按原流程运行。
+
 音频在树莓派本地内存中分段识别，最长每段 12 秒，队列最多 6 段，超过 8 秒的待处理结果丢弃。没有云端语音 API，不保存录音或普通聊天文字；服务器内发出的点歌和控制反馈使用现有音乐流程。`runtime/status.json` 中的 `voice_commands` 提供接收、解码与命令计数，便于排障。只有与机器人同频道的声音可被识别；机器人尚未入频道时不能用喊话召唤。
 
 ## Quick Windows setup
