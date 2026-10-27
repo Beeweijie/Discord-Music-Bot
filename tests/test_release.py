@@ -51,7 +51,9 @@ class ReleaseTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
             atomic_json(root / 'runtime/updates/active.json', {'python': active.relative_to(root).as_posix()})
-            self.assertEqual(Path(bot_python(root)), active)
+            # Windows TEMP may use an 8.3 alias (RUNNER~1) while the updater
+            # resolves the same directory to its long name (runneradmin).
+            self.assertTrue(Path(bot_python(root)).samefile(active))
 
     def test_source_dependency_list_matches_voice_installer(self):
         from scripts.install_voice import DEPENDENCIES
