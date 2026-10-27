@@ -47,6 +47,26 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.session = ChannelSession(vc=self.vc, guild_id=1, channel_id=2)
         self.service.sessions["1"] = self.session
 
+    async def test_playqueue_keeps_current_song_and_does_not_search(self):
+        self.service._play_impl = AsyncMock()
+        self.service._resume_impl = AsyncMock()
+        await self.service._playqueue_impl(self.ctx)
+        self.service._play_impl.assert_not_awaited()
+        self.service._resume_impl.assert_not_awaited()
+        self.vc.stop.assert_not_called()
+
+    async def test_playqueue_resumes_saved_queue_before_default_playlist(self):
+        self.vc.is_playing.return_value = False
+        self.session.queue = [song('saved')]
+        self.service._play_impl = AsyncMock()
+        self.service._resume_impl = AsyncMock()
+        await self.service._playqueue_impl(self.ctx)
+        self.service._resume_impl.assert_awaited_once_with(self.ctx)
+        self.service._play_impl.assert_not_awaited()
+        self.session.queue.clear()
+        await self.service._playqueue_impl(self.ctx)
+        self.service._play_impl.assert_awaited_once_with(self.ctx)
+
     async def test_failed_checkpoint_does_not_stop_other_guilds_or_next_interval(self):
         from bot_app.application.diagnostics import log_identity
         self.service.checkpoint_task.cancel()
@@ -100,7 +120,7 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(value=value):
                 await self.service.dispatch("play", self.ctx, value)
                 self.service._queue_collection_input.assert_awaited_with(
-                    self.ctx, explicit if value == explicit else default, self.channel, self.session, front=False)
+                    self.ctx, explicit if value == explicit else default, self.channel, self.session, front=False, start=True)
 
     async def test_playtop_inserts_first_preserves_playback_and_saves_order(self):
         current, first, second, priority = [song(name) for name in ("current", "first", "second", "priority")]
@@ -163,6 +183,88 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.session.queue, queue)
                 self.vc.play.assert_called_once()
                 self.vc.stop.assert_not_called()
+
+    async def test_playskip_inserts_front_then_stops_current_without_losing_queue(self):
+        priority, current, waiting = song('priority'), song('current'), song('waiting')
+        self.session.current_song = current
+        self.session.queue = [waiting]
+        self.service.run_media = AsyncMock(return_value=priority)
+        self.service._start_predownload_task = Mock()
+        await self.service.dispatch('playskip', self.ctx, 'priority')
+        self.assertEqual(self.session.queue, [priority, waiting])
+        self.vc.stop.assert_called_once()
+        self.assertTrue(current.suppress_repeat)
+
+    async def test_playskip_failed_search_does_not_interrupt_current(self):
+        self.session.current_song = song('current')
+        self.service.run_media = AsyncMock(side_effect=RuntimeError('no match'))
+        with self.assertLogs('bot_app.application.music.commands', level='WARNING'):
+            await self.service.dispatch('playskip', self.ctx, 'missing')
+        self.vc.stop.assert_not_called()
+
+    async def test_playskip_when_idle_starts_target_once(self):
+        (self.media.music_dir / 'priority.mp3').write_bytes(b'audio')
+        priority, waiting = song('priority'), song('waiting')
+        self.session.queue = [waiting]
+        self.vc.is_playing.return_value = False
+        self.service.run_media = AsyncMock(return_value=priority)
+        self.service._start_predownload_task = Mock()
+        await self.service.dispatch('playskip', self.ctx, 'priority.mp3')
+        self.assertIs(self.session.current_song, priority)
+        self.assertEqual(self.session.queue, [waiting])
+        self.vc.play.assert_called_once()
+        self.vc.stop.assert_not_called()
+
+    async def test_enqueue_idle_does_not_start_audio_or_drop_existing_queue(self):
+        added, waiting = song('added'), song('waiting')
+        self.session.queue = [waiting]
+        self.vc.is_playing.return_value = False
+        self.service.run_media = AsyncMock(return_value=added)
+        self.service._start_predownload_task = Mock()
+        await self.service.dispatch('enqueue', self.ctx, 'added')
+        self.assertEqual(self.session.queue, [waiting, added])
+        self.assertTrue(self.session.queue_waiting)
+        self.vc.play.assert_not_called()
+        await self.service.play_next('1')
+        self.vc.play.assert_not_called()
+
+    async def test_playskip_playlist_keeps_block_order_and_skips_paused_track(self):
+        current, waiting, first, second = [song(name) for name in ('current', 'waiting', 'first', 'second')]
+        self.session.current_song = current
+        self.session.queue = [waiting]
+        self.vc.is_playing.return_value = False
+        self.vc.is_paused.return_value = True
+        self.service.run_media = AsyncMock(return_value=[first, second])
+        self.service._start_predownload_task = Mock()
+        await self.service.dispatch('playskip', self.ctx, 'https://www.youtube.com/playlist?list=example')
+        self.assertEqual(self.session.queue, [first, second, waiting])
+        self.vc.stop.assert_called_once()
+        self.assertTrue(current.suppress_repeat)
+
+    async def test_enqueue_playlist_idle_does_not_start_playback(self):
+        first, second = song('first'), song('second')
+        self.vc.is_playing.return_value = False
+        self.service.run_media = AsyncMock(return_value=[first, second])
+        self.service._start_predownload_task = Mock()
+        await self.service.dispatch('enqueue', self.ctx, 'https://www.youtube.com/playlist?list=example')
+        self.assertEqual(self.session.queue, [first, second])
+        self.assertTrue(self.session.queue_waiting)
+        self.vc.play.assert_not_called()
+
+    async def test_playskip_cancels_outdated_preparation(self):
+        preparing, target = song('preparing'), song('target')
+        self.session.preparing_song = preparing
+        self.vc.is_playing.return_value = False
+        self.service.run_media = AsyncMock(return_value=target)
+        self.service._start_predownload_task = Mock()
+        await self.session.play_lock.acquire()
+        try:
+            await self.service.dispatch('playskip', self.ctx, 'target')
+            self.assertTrue(preparing.cancelled)
+            self.assertTrue(preparing.cancel_event.is_set())
+            self.assertIs(self.session.queue[0], target)
+        finally:
+            self.session.play_lock.release()
 
     async def test_playtop_collection_preserves_order_and_applies_limits(self):
         current, waiting, first, second, third = [song(name) for name in ("current", "waiting", "first", "second", "third")]
@@ -304,7 +406,7 @@ class MusicTests(unittest.IsolatedAsyncioTestCase):
         self.service._check_cooldown = AsyncMock(return_value=True)
         self.service._queue_collection_input = AsyncMock()
         await self.service.dispatch("play", self.ctx, None)
-        self.service._queue_collection_input.assert_awaited_with(self.ctx, custom, self.channel, self.session, front=False)
+        self.service._queue_collection_input.assert_awaited_with(self.ctx, custom, self.channel, self.session, front=False, start=True)
         # Changing defaults does not replace the existing server player's volume.
         for guild_id, volume in ((1, 40), (2, 63)):
             channel = SimpleNamespace(id=99, guild=SimpleNamespace(id=guild_id, voice_client=None))

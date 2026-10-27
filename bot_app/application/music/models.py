@@ -57,4 +57,5 @@ class ChannelSession:
     sleep_until: Optional[float] = None
     sleeping: bool = False
     paused_since: Optional[float] = None
+    queue_waiting: bool = False
     retiring: bool = False

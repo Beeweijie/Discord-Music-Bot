@@ -9,7 +9,7 @@ from bot_app.presentation.discord.music import Music
 from bot_app.presentation.discord.panels import NowPlayingView
 
 ROOT = Path(__file__).resolve().parent.parent
-MUSIC_COMMANDS = {"join", "play", "playtop", "queue", "pause", "resume", "now", "remove", "volume",
+MUSIC_COMMANDS = {"join", "play", "playtop", "playskip", "queue", "pause", "resume", "now", "remove", "volume",
                   "seek", "shuffle", "skip", "stop", "help_music", "clear", "move", "loop", "replay", "fair", "dedupe", "nextup", "surprise", "sleep", "history", "favorite", "favorites", "unfavorite", "playlist_save", "playlist_load", "playlists", "playlist_delete"}
 
 
@@ -23,15 +23,16 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         self.service.dispatch = AsyncMock()
         with patch("bot_app.bootstrap.create_music_service", return_value=self.service):
             await self.bot.load_extension("bot_app.presentation.discord.music")
+        await self.bot.load_extension("bot_app.presentation.discord.voice_commands")
         await self.bot.load_extension("bot_app.presentation.discord.polls")
         await self.bot.load_extension("bot_app.presentation.discord.welcome")
         self.cog = self.bot.get_cog("Music")
 
     async def test_all_original_command_names_and_aliases(self):
         prefix = set(self.bot.all_commands)
-        self.assertEqual(prefix, MUSIC_COMMANDS | {"ping", "help", "sync", "a", "update", "emoji", "add", "playlist_defult", "poll", "poll_end", "welcome"})
+        self.assertEqual(prefix, MUSIC_COMMANDS | {"ping", "help", "sync", "a", "update", "emoji", "add", "playlist_defult", "poll", "poll_end", "welcome", "voice"})
         slash = {command.name for command in self.bot.tree.get_commands()}
-        self.assertEqual(slash, MUSIC_COMMANDS | {"ping", "poll", "poll_end"})
+        self.assertEqual(slash, MUSIC_COMMANDS | {"ping", "poll", "poll_end", "voice"})
         self.assertIs(self.bot.get_command("a"), self.bot.get_command("sync"))
         self.assertTrue(self.bot.get_command("sync").checks)
 
@@ -99,6 +100,20 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         action, slash_ctx, query = self.service.dispatch.await_args.args
         self.assertEqual((action, query), ("playtop", "a song name"))
         self.assertIs(slash_ctx.author, interaction.user)
+
+    async def test_playskip_prefix_and_slash_reach_same_use_case(self):
+        ctx = Mock()
+        await self.cog.playskip_prefix.callback(self.cog, ctx, input='song name')
+        self.service.dispatch.assert_awaited_with('playskip', ctx, 'song name')
+        interaction = Mock()
+        interaction.response.defer = AsyncMock()
+        await self.cog.playskip_slash.callback(self.cog, interaction, 'song name')
+        action, slash_ctx, query = self.service.dispatch.await_args.args
+        self.assertEqual((action, query), ('playskip', 'song name'))
+        self.assertIs(slash_ctx.author, interaction.user)
+        command = self.bot.tree.get_command('playskip')
+        self.assertTrue(command.parameters[0].required)
+        self.assertTrue(command.parameters[0].autocomplete)
 
     async def test_readme_support_columns_match_registered_commands(self):
         rows = {}

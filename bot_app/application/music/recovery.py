@@ -51,7 +51,7 @@ class RecoveryOperations:
                 tracks.append(data)
             self.queue_repository.save(key, {"tracks": tracks, "volume": session.volume,
                 "history": session.history[-100:], "sleep_until": session.sleep_until, "sleeping": session.sleeping,
-                "loop_mode": session.loop_mode, "channel_id": session.channel_id,
+                "loop_mode": session.loop_mode, "channel_id": session.channel_id, "queue_waiting": session.queue_waiting,
                 "text_channel_id": session.last_text_channel_id,
                 "panel_channel_id": session.panel_channel_id, "panel_message_id": session.panel_message_id})
         except OSError:
@@ -79,6 +79,7 @@ class RecoveryOperations:
                 if session.sleep_until is not None and (type(session.sleep_until) not in (int, float) or not 0 < session.sleep_until < 1e12):
                     raise ValueError("Invalid sleep deadline")
                 session.sleeping = bool(data.get("sleeping", False))
+                session.queue_waiting = bool(data.get("queue_waiting", False))
                 for field, stored in (("channel_id", "channel_id"), ("last_text_channel_id", "text_channel_id"), ("panel_channel_id", "panel_channel_id"), ("panel_message_id", "panel_message_id")):
                     value = data.get(stored)
                     if value is not None and (type(value) is not int or not 0 < value < 2**64):
@@ -115,6 +116,7 @@ class RecoveryOperations:
     async def _continue_saved(self, ctx, session):
         channel = self._get_user_voice_channel(ctx)
         session.stopped = False
+        session.queue_waiting = False
         session.sleeping = False
         if session.sleep_until and session.sleep_until <= time.time():
             session.sleep_until = None
@@ -136,7 +138,7 @@ class RecoveryOperations:
                         if self.sessions.get(self._session_status_key(session)) is not session:
                             continue
                         self._persist_session(session)
-                        if not session.restored and not session.sleeping and not session.current_song and session.queue and session.vc and session.vc.is_connected() and not session.play_lock.locked():
+                        if not session.restored and not session.sleeping and not session.queue_waiting and not session.current_song and session.queue and session.vc and session.vc.is_connected() and not session.play_lock.locked():
                             self._spawn(self.play_next(self._session_status_key(session)),
                                 name=f"music.play_next {self._session_status_key(session)}")
                         if session.current_song or session.preparing_song or session.panel_message_id:

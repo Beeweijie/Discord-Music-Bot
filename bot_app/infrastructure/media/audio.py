@@ -1,5 +1,6 @@
 """Discord/FFmpeg source construction stays outside the application layer."""
 import discord
+from bot_app.infrastructure.media.voice_replies import ReplyMixer
 
 
 class DiscordAudio:
@@ -7,7 +8,7 @@ class DiscordAudio:
         self.ffmpeg_path = ffmpeg_path
 
     def create_source(self, path, volume, position=0):
-        return discord.PCMVolumeTransformer(
+        return ReplyMixer(
             discord.FFmpegPCMAudio(str(path), executable=self.ffmpeg_path, before_options=f"-ss {int(position)}", options="-vn"),
             volume=volume / 100,
         )

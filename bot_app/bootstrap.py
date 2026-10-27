@@ -5,6 +5,28 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
+def create_speech_recognizer():
+    from bot_app.infrastructure.media.speech import SenseVoice
+    from bot_app.infrastructure.paths import BASE_DIR
+    model = os.getenv("VOICE_MODEL_PATH") or str(BASE_DIR / "data" / "voice-models" /
+        "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17")
+    wake = Path(os.getenv("VOICE_WAKE_MODEL_PATH") or str(BASE_DIR / "data" / "voice-models" /
+        "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"))
+    alternate = BASE_DIR / "data" / "voice-models" / "sherpa-onnx-paraformer-zh-2024-03-09"
+    return SenseVoice(model, wake if wake.is_dir() else None, alternate if alternate.is_dir() else None,
+        language=os.getenv('VOICE_ASR_LANGUAGE', 'zh'))
+
+
+def create_voice_replies():
+    from bot_app.infrastructure.media.voice_replies import VoiceReplies
+    return VoiceReplies()
+
+
+def create_voice_music_search():
+    from bot_app.infrastructure.media.voice_music import VoiceMusicSearch
+    return VoiceMusicSearch()
+
+
 def create_desktop_controller():
     from bot_app.infrastructure.processes.desktop import DesktopProcessController
     return DesktopProcessController()

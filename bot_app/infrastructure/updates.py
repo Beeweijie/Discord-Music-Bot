@@ -182,11 +182,16 @@ class GitHubUpdater:
         clean_environment = os.environ.copy()
         clean_environment.pop("PYTHONPATH", None)
         clean_environment.pop("PYTHONHOME", None)
+        commands = [([sys.executable, "-m", "venv", str(environment)], 90),
+                    ([str(python), "-m", "pip", "install", "-r", str(job / "source/requirements.txt")], 600)]
+        voice_installer = job / 'source/scripts/install_voice.py'
+        if (os.getenv('VOICE_COMMANDS_ENABLED', 'false').lower() in {'1', 'true', 'yes', 'on'}
+                and voice_installer.is_file()):
+            commands.append(([str(python), str(voice_installer)], 600))
+        commands.append(([str(python), "-c", "import bot_app.main; import bot_app.infrastructure.updates; import scripts.run_bot; import bot_app.presentation.api.server" +
+                         ("; import tkinter, pystray" if os.name == "nt" else "")], 60))
         with (job / "prepare.log").open("w", encoding="utf-8") as log:
-            for command, timeout in (([sys.executable, "-m", "venv", str(environment)], 90),
-                    ([str(python), "-m", "pip", "install", "-r", str(job / "source/requirements.txt")], 600),
-                    ([str(python), "-c", "import bot_app.main; import bot_app.infrastructure.updates; import scripts.run_bot; import bot_app.presentation.api.server" +
-                     ("; import tkinter, pystray" if os.name == "nt" else "")], 60)):
+            for command, timeout in commands:
                 completed = subprocess.run(command, cwd=job / "source", stdout=log, stderr=subprocess.STDOUT,
                     timeout=timeout, env=clean_environment, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 if completed.returncode:

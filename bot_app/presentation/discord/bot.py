@@ -84,6 +84,7 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         await self.load_extension("bot_app.presentation.discord.music")
+        await self.load_extension("bot_app.presentation.discord.voice_commands")
         await self.load_extension("bot_app.presentation.discord.polls")
         # Keep !welcome available even when member events were disabled at startup.
         await self.load_extension("bot_app.presentation.discord.welcome")

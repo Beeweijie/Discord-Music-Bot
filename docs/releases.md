@@ -8,7 +8,7 @@ run `python -m unittest discover -s tests`. Run `python main.py --check` locally
 when configured; it does not connect to Discord. Do not start another bot against
 an active installation's data.
 
-For v1.3.0, use the [release notes](release-notes/v1.3.0.md). Verify an upgrade
+For v1.4.0, use the [release notes](release-notes/v1.4.0.md). Verify an upgrade
 from v1.2.1 with multiple saved channel queues, including a restart after Stop.
 In a test Discord voice channel, verify playback and paused moves from A to B
 and back, controls in the destination, and rejection of controls from a different
@@ -27,6 +27,15 @@ builds the ZIP and uploads both assets to a draft before publishing it. It uses
 `docs/release-notes/<tag>.md` when present. It can also be run manually against
 an existing tag. Failed tests prevent that workflow from publishing assets.
 Never publish files by recursively zipping the working directory.
+
+Voice commands are optional. The release embeds the fixed reply audio in a Python
+module so existing v1.3.0 updater path checks accept the ZIP. Original WAVs and
+`requirements-voice.txt` stay in the source repository; the ZIP includes
+`scripts/install_voice.py` to install dependencies into the selected bot environment.
+ASR and keyword models are downloaded separately and stored under `data/voice-models/`.
+From v1.4.0 onward, update preparation installs the optional dependencies when voice
+commands are enabled. An upgrade using an older updater prepares base dependencies
+only; run the helper after that first upgrade if voice was previously enabled.
 
 ## Automatic updates
 

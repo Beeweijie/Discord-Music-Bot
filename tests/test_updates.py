@@ -41,6 +41,20 @@ def bundle(files=None):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_enabled_voice_dependencies_are_prepared_before_update_smoke_import(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as directory:
+            job = Path(directory)
+            installer = job / 'source/scripts/install_voice.py'
+            installer.parent.mkdir(parents=True)
+            installer.touch()
+            for enabled, expected_count in [('true', 4), ('false', 3)]:
+                with patch.dict(os.environ, {'VOICE_COMMANDS_ENABLED': enabled}), patch(
+                        'bot_app.infrastructure.updates.subprocess.run', return_value=SimpleNamespace(returncode=0)) as run:
+                    self.updater.prepare_environment(job)
+                    self.assertEqual(run.call_count, expected_count)
+                    args = [call.args[0] for call in run.call_args_list]
+                    self.assertEqual(any(str(installer) in cmd for cmd in args), enabled == 'true')
     def test_release_metadata_and_binary_assets_use_the_correct_accept_header(self):
         for url, expected in (("https://api.github.com/repos/a/b/releases/latest", "application/vnd.github+json"),
                               ("https://github.com/a/b/releases/download/v1.1.1/release.zip", "application/octet-stream")):
