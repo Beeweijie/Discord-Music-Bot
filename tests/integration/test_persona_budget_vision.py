@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
@@ -233,9 +233,39 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(discord_image(self.attachment(**kwargs),'2'))
         self.assertIsNone(discord_image(self.attachment(),'9'))
 
+    def download_service(self,raw,status=200,length=None):
+        class Response:
+            content_length=length
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self,*args):
+                pass
+        async def chunks(_size):
+            yield raw
+        response=Response(); response.status=status
+        response.content=SimpleNamespace(iter_chunked=chunks)
+        service=VisionService(SimpleNamespace())
+        service.session=SimpleNamespace(closed=False,get=Mock(return_value=response),close=AsyncMock())
+        return service
+
+    async def test_cdn_bytes_are_sent_inline_without_bot_credentials(self):
+        service=self.download_service(b'\x89PNG\r\n\x1a\nsynthetic')
+        result=await service.inline_image(discord_image(self.attachment(),'2'),'2')
+        self.assertTrue(result.startswith('data:image/png;base64,'))
+        self.assertEqual(service.session.get.call_args.kwargs,{'allow_redirects':False})
+        await service.close()
+
+    async def test_redirects_nonimages_and_oversized_bodies_fail_closed(self):
+        for raw,status,length in [(b'',302,None),(b'not an image',200,None),
+                                  (b'',200,9*1024*1024),(b'x'*(8*1024*1024+1),200,None)]:
+            service=self.download_service(raw,status,length)
+            with self.assertRaises(ValueError):
+                await service.inline_image(discord_image(self.attachment(),'2'),'2')
+            await service.close()
+
     async def test_one_vision_call_is_cached_and_urls_never_enter_retained_history(self):
         model=SimpleNamespace(complete=AsyncMock(return_value='图片里是一条蓝色的鱼。'))
-        service=VisionService(model)
+        service=VisionService(model,loader=AsyncMock(return_value='data:image/png;base64,c3ludGhldGlj'))
         image=discord_image(self.attachment(),'2')
         message=event(text='',images=(image,))
         first=await service.describe(message,dict(DEFAULTS,vision_enabled=True))
@@ -268,7 +298,8 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
             cfg=dict(copy.deepcopy(DEFAULTS),enabled=True,channels=['2'],mode='participate',vision_enabled=True)
             model=SimpleNamespace(complete=AsyncMock(side_effect=['一条蓝色的鱼。',{'action':'reply','reason':'useful','target_id':'100'},'这鱼挺蓝。']))
             memory=MemoryService(MemoryRepository(Path(folder)/'memory.db'),model,lambda _:dict(MEMORY_DEFAULTS,enabled=True),lambda _:True)
-            chat=ChatService(ChatRepository(Path(folder)/'chat.db'),model,memory,lambda _:cfg,vision=VisionService(model))
+            chat=ChatService(ChatRepository(Path(folder)/'chat.db'),model,memory,lambda _:cfg,
+                             vision=VisionService(model,loader=AsyncMock(return_value='data:image/png;base64,c3ludGhldGlj')))
             try:
                 state=ChannelState(); state.messages.append(event(text='',images=({'id':'10','url':'https://cdn.discordapp.com/attachments/2/10/image.png'},)))
                 state.sequence=1; state.can_send=AsyncMock(return_value=True)

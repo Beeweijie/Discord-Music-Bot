@@ -42,10 +42,11 @@ class AIRuntime:
         await self.chat.close()
         await self.persona.close()
         await self.memory.close()
+        await self.vision.close()
         await self.model.close()
 
     def health(self):
         return {'configured': self.model.configured, 'state': 'ready' if self.model.configured else 'missing_api_key',
                 'chat_error': self.chat.last_error, 'memory_error': self.memory.error,
-                'semantic_search': self.memory.semantic_state, 'web_search':self.web.state, 'vision':self.vision.state,
+                'semantic_search': self.memory.semantic_state, 'web_search':self.web.state, 'vision':self.vision.state,'vision_error':self.vision.error,
                 'persona_error':self.persona.error,'channels': len(self.chat.channels)}
