@@ -1,31 +1,31 @@
 # Discord Music Bot
 
-## 喵酱语音点歌（可选）
+## Miao-chan voice music requests (optional)
 
-让喵酱通过 `/join` 或 `/play` 加入自己的语音频道，然后说：
+Use `/join` or `/play` to bring Miao-chan into your voice channel, then speak a command. Voice commands use Chinese; the examples below keep the spoken phrases and explain their meaning in English.
 
-- **喵酱喵酱，下一首歌**：跳过当前歌曲。
-- **喵酱喵酱，播放周杰伦的晴天**：联想歌名并搜索，加入队首后立即切过去，保留其余待播队列。
-- **喵酱喵酱，加入雨爱吧**：加入队尾，不打断当前歌曲；空闲时只排队，等你说“播放”或“继续播放”。
-- **喵酱喵酱，暂停播放 / 继续播放**。
+- **喵酱喵酱，下一首歌** (“Miao-chan, Miao-chan, next song”): skip the current track.
+- **喵酱喵酱，播放周杰伦的晴天** (“Miao-chan, Miao-chan, play Qing Tian by Jay Chou”): infer the song title, search for it, add it to the front, and switch to it immediately while preserving the rest of the queue.
+- **喵酱喵酱，加入雨爱吧** (“Miao-chan, Miao-chan, add Yu Ai”): add the song to the end without interrupting playback. When idle, this only queues the song; say “播放” (“play”) or “继续播放” (“resume playback”) to start.
+- **喵酱喵酱，暂停播放 / 继续播放** (“Miao-chan, Miao-chan, pause / resume playback”).
 
-可以先单独说“喵酱喵酱”，等可莉角色音色的“我在喵”回复结束，再于 8 秒内说指令。没听清会出声提示重说；超时会结束本次等待。播歌时短暂降低音乐音量，回复后恢复；暂停时回复不推进音乐进度。具体机制和音色来源见 [语音回复](docs/voice-replies.md)。其他机器人的音频不作为口令；说话人必须仍在喵酱所在的频道。识别到的指令会显示在最近使用音乐命令的文字频道。使用耳机可减少音乐从麦克风回传带来的干扰。
+You can also say just “喵酱喵酱”, wait for the Klee-style “我在喵” (“I'm here, meow”) reply to finish, then give a command within 8 seconds. If the command is unclear, the bot asks you aloud to repeat it; a timeout ends the listening session. During music playback, the bot briefly lowers the music volume and restores it after replying. Replies while paused do not advance the music's playback position. See [Voice replies](docs/voice-replies.md) for the mechanism and voice sources. Audio from other bots is ignored, and the speaker must still be in Miao-chan's voice channel. Recognized commands appear in the text channel most recently used for music commands. Headphones help prevent music from feeding back through your microphone.
 
-唤醒同时使用读音检测和文字匹配，避免“喵酱”转成同音字后失效。两声“喵酱”被停顿拆成两段时，可在 3 秒内衔接；支持“喵酱喵酱，请帮我下一首歌吧”等常见说法。如果听到唤醒词但没听清后面的命令，会出声提示，可以接着再说一次指令。
+Wake detection combines phonetic detection with text matching, so homophones in the transcript do not prevent “喵酱” from being recognized. If a pause splits the two repetitions into separate segments, they can be joined within 3 seconds. Common polite phrases such as “喵酱喵酱，请帮我下一首歌吧” (“Miao-chan, Miao-chan, please skip to the next song”) are supported. If the wake phrase is detected but the following command is unclear, the bot prompts you aloud and lets you try the command again.
 
-语音“播放某首歌”使用 `playskip`，加入队首后立即跳过当前歌曲；“加入某首歌”“加入列表某首歌”只加入队尾。歌名使用拼音联想，结合常见歌曲、当前服务器队列、历史和本人的收藏/歌单，例如“与爱”→“雨爱”。搜索会比较多个音乐结果，降低无关讲座和短视频的优先级；纠正后的关键词会显示在文字频道。无法确定时列出最多三个候选，可在 30 秒内说“第一个”“第二个”或“第三个”，也可说“取消”。
+Spoken “播放某首歌” (“play a song”) uses `playskip`: it adds the song to the front and immediately skips the current track. “加入某首歌” (“add a song”) and “加入列表某首歌” (“add a song to the queue”) only append it. Song-title matching uses pinyin suggestions, common songs, the server's current queue and history, and your own favorites and playlists; for example, “与爱” can be corrected to “雨爱” (Yu Ai). Search compares multiple music results and gives unrelated lectures and short videos lower priority. Corrected search terms appear in the text channel. If the match is uncertain, the bot offers up to three candidates. Within 30 seconds, say “第一个”, “第二个”, or “第三个” (“the first”, “the second”, or “the third”), or say “取消” (“cancel”).
 
-`/voice status` 或 `!voice` 查看状态。说「闭嘴」「取消」「安静」可结束本人的监听和候选选择，音乐继续播放；文字兜底为 `!voice quiet` 或 `/voice quiet`。重新喊「喵酱喵酱」会退出旧候选、取消旧搜索，开始新指令。每次唤醒最多提醒一次「没听清」，监听超时安静退出。「播放歌单／列表／队列」播放现有队列。具有“管理服务器”权限的成员可用 `/voice off`、`/voice on` 临时关闭或开启本服务器语音指令（重启后恢复默认）。全局关闭可设置 `.env` 中的 `VOICE_COMMANDS_ENABLED=false` 后重启。
+Use `/voice status` or `!voice` to check the status. Saying “闭嘴”, “取消”, or “安静” (“be quiet”, “cancel”, or “quiet”) ends your own listening session and candidate selection while music keeps playing. Text alternatives are `!voice quiet` and `/voice quiet`. Saying “喵酱喵酱” again clears the previous candidates, cancels the previous search, and starts a new command. Each wake session gives at most one “I didn't catch that” prompt; listening timeouts end silently. “播放歌单／列表／队列” (“play the playlist / list / queue”) starts the existing queue. Members with **Manage Server** permission can temporarily disable or enable voice commands for the server with `/voice off` and `/voice on`; restarting restores the default. To disable voice commands globally, set `VOICE_COMMANDS_ENABLED=false` in `.env` and restart.
 
-排障可用 `!voice test` 或 `/voice test`：仅接收发起者接下来 30 秒、最多 3 段测试转写，显示识别文字、读音唤醒结果和音量指标，不保存录音。前缀命令的诊断结果发在本频道，斜线命令仅发起者可见；普通识别和其他成员的转写不会作为诊断结果显示。
+For troubleshooting, use `!voice test` or `/voice test`. For the next 30 seconds, it accepts up to 3 test segments from the person who started the test, displaying the recognized text, phonetic wake-detection result, and audio-level metrics without saving recordings. Prefix-command diagnostics appear in the current channel; slash-command diagnostics are visible only to the person who invoked them. Ordinary recognition results and other members' transcripts are not shown as diagnostic output.
 
-安装：在项目根目录执行 `python scripts/install_voice.py`，安装器会选择 Bot 当前使用的更新环境或 `.venv`。下载 [SenseVoice int8 模型](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2)，解压到 `data/voice-models/`，设置 `VOICE_COMMANDS_ENABLED=true` 并重启。模型目录应包含 `model.int8.onnx` 和 `tokens.txt`；其他位置可通过 `VOICE_MODEL_PATH` 指定。中文指令使用 `VOICE_ASR_LANGUAGE=zh`，推理使用两个 CPU 线程。功能需要 discord.py 2.7.1 和 DAVE 支持；源码检出也可在 Bot 的 Python 环境中安装 `requirements-voice.txt`，Release ZIP 使用上述安装器。模型需单独下载，普通音乐功能无需安装语音依赖。
+To install, run `python scripts/install_voice.py` from the project root. The installer selects the update environment currently used by the bot, or `.venv`. Download the [SenseVoice int8 model](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2), extract it into `data/voice-models/`, set `VOICE_COMMANDS_ENABLED=true`, and restart. The model directory must contain `model.int8.onnx` and `tokens.txt`; use `VOICE_MODEL_PATH` for a different location. Chinese commands use `VOICE_ASR_LANGUAGE=zh`, with two CPU threads for inference. This feature requires discord.py 2.7.1 and DAVE support. For source checkouts, you can also install `requirements-voice.txt` in the bot's Python environment; for Release ZIPs, use the installer above. Models must be downloaded separately. Regular music playback does not require the voice dependencies.
 
-为增强唤醒识别，再下载 [中文读音唤醒模型](https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2)，同样解压到 `data/voice-models/`。也可通过 `VOICE_WAKE_MODEL_PATH` 指定目录。没有该模型时仍可使用文字唤醒；状态中的 `wake_detector=phonetic` 表示读音检测已经启用。额外模型约 31 MiB，使用一个 CPU 线程。
+For more reliable wake detection, also download the [Chinese phonetic wake-word model](https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2) and extract it into `data/voice-models/`. You can specify a different directory with `VOICE_WAKE_MODEL_PATH`. Without this model, transcript-based wake matching still works. A status of `wake_detector=phonetic` means phonetic detection is enabled. The additional model is about 31 MiB and uses one CPU thread.
 
-Linux 还需系统 Opus 库；Debian / Ubuntu / Raspberry Pi OS 可执行 `sudo apt-get install libopus0`。缺少原生编解码库时，语音状态会显示错误并在日志中给出提示；普通音乐功能仍按原流程运行。
+Linux also requires the system Opus library. On Debian, Ubuntu, or Raspberry Pi OS, run `sudo apt-get install libopus0`. If a native codec library is missing, the voice status displays an error and the logs provide details. Regular music playback continues through its existing workflow.
 
-音频在树莓派本地内存中分段识别，最长每段 12 秒，队列最多 6 段，超过 8 秒的待处理结果丢弃。没有云端语音 API，不保存录音或普通聊天文字；服务器内发出的点歌和控制反馈使用现有音乐流程。`runtime/status.json` 中的 `voice_commands` 提供接收、解码与命令计数，便于排障。只有与机器人同频道的声音可被识别；机器人尚未入频道时不能用喊话召唤。
+Audio is recognized in segments held locally in the Raspberry Pi's memory. Each segment is at most 12 seconds long, the queue holds at most 6 segments, and pending results older than 8 seconds are discarded. No cloud speech API is used, and neither recordings nor ordinary conversation transcripts are saved. Song requests and control feedback in the server use the existing music workflow. The `voice_commands` field in `runtime/status.json` provides receive, decode, and command counters for troubleshooting. Only audio from people in the bot's voice channel can be recognized; you cannot summon the bot by voice before it has joined a channel.
 
 ## Quick Windows setup
 
@@ -155,3 +155,4 @@ Use `/poll` with a question and 2–10 options separated by `|`. `hours` accepts
 Use `/poll_end message:MESSAGE_LINK` or `!poll_end MESSAGE_LINK` to end a poll early. Only its creator or a member with Manage Server or Manage Messages in the channel can do this.
 
 Discord native polls preserve votes and deadlines even while the bot is offline, and expire automatically. Creator and management records are stored per server in `data/polls/`. Polls are not anonymous; members can inspect votes through Discord. Both the bot and the creator need permission to send polls.
+
