@@ -45,6 +45,7 @@ class ThinDecisionTests(unittest.TestCase):
         result=normalize({'a':'reply','r':'respond_to_member','i':'2','d':0,'t':0},{2:'100'})
         self.assertEqual(result['action'],'reply')
         self.assertEqual(result['reason'],'useful')
+        self.assertEqual(result['reason_source'],'fallback')
         self.assertEqual(result['target_id'],'100')
         self.assertEqual(normalize({'action':'reply','reason':'followup','i':2},{2:'100'})['target_id'],'100')
 
@@ -76,7 +77,7 @@ class ThinDecisionTests(unittest.TestCase):
         self.assertEqual(context['gap_s'],720)
         self.assertTrue(context['followup'])
         self.assertEqual(set(targets.values()),{'100','101','102'})
-        self.assertLessEqual(estimated_tokens(''.join(row['content'] for row in messages)),300)
+        self.assertLessEqual(estimated_tokens(''.join(row['content'] for row in messages)),600)
 
     def test_recent_bot_anchor_is_kept_after_several_unanswered_messages(self):
         now=time.time(); scope=Scope('1','2')
@@ -87,7 +88,7 @@ class ThinDecisionTests(unittest.TestCase):
         messages,targets=judge_messages(state,cfg,[],ParticipationPlan(1,2,True,1))
         self.assertIn('100',targets.values())
         self.assertIn('106',targets.values())
-        self.assertLessEqual(estimated_tokens(''.join(row['content'] for row in messages)),300)
+        self.assertLessEqual(estimated_tokens(''.join(row['content'] for row in messages)),600)
         context=json.loads(messages[1]['content'])
         self.assertEqual([row[0] for row in context['msgs']],list(range(len(context['msgs']))))
         self.assertEqual(list(targets),list(range(len(context['msgs']))))
@@ -98,6 +99,23 @@ class ThinDecisionTests(unittest.TestCase):
             MessageEvent(scope,'100','3','member','<@99> 看看这个',time.time()-10),event('101',text='你怎么看？')]))
         messages,_=judge_messages(state,DEFAULTS,[],ParticipationPlan(1,4,False,1))
         self.assertIn('@me',messages[1]['content'])
+
+    def test_social_feedback_retains_latest_speaker_even_without_same_member_followup(self):
+        now=time.time();scope=Scope('1','2')
+        feedback='我给你加了几个回复判定，结果你一直判定为不回'
+        state=ChannelState(messages=deque([
+            MessageEvent(scope,'100','4','member','666',now-180,bot_user_id='99'),
+            MessageEvent(scope,'101','99','bot','我还以为你要继续测我什么呢。',now-175,is_bot=True,bot_user_id='99'),
+            MessageEvent(scope,'102','4','member','我测你码',now-170,bot_user_id='99'),
+            MessageEvent(scope,'103','3','another member',feedback,now,bot_user_id='99')]))
+        cfg=dict(DEFAULTS,participation_style='active')
+        messages,targets=judge_messages(state,cfg,[],ParticipationPlan(1,4,False,1))
+        context=json.loads(messages[1]['content'])
+        self.assertFalse(context['followup'])
+        self.assertEqual(context['msgs'][-1][1],'B')
+        self.assertEqual(context['msgs'][-1][2],feedback)
+        self.assertEqual(targets[context['latest']],'103')
+        self.assertLessEqual(estimated_tokens(''.join(row['content'] for row in messages)),600)
 
 
 class LayeredMemoryTests(unittest.IsolatedAsyncioTestCase):

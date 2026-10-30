@@ -20,7 +20,7 @@ from .prompts import COMMON, EXPRESSION, STYLE_EXAMPLES, VERSION
 from .participation import participation_plan, response_nudge
 from .reply import ReplyGenerator
 from .thinking import thinking_plan, ThinkingPlan
-from .judgement import judge_messages, normalize, needs_deep_memory, DecisionError
+from .judgement import judge_messages, normalize, needs_deep_memory, estimated_tokens, DecisionError
 from .delivery import reply_parts
 
 logger = logging.getLogger(__name__)
@@ -203,10 +203,14 @@ class ChatService:
         except Exception:
             logger.warning('Shallow memory unavailable')
         target_ids={current.message_id}
-        if direct or response_nudge(state,cfg):
+        nudged=response_nudge(state,cfg)
+        decision_source='direct' if direct else 'nudge' if nudged else 'judge'
+        judge_input=0
+        if direct or nudged:
             decision = {"action": "reply", "reason": "addressed", "target_id": current.message_id}
         else:
             thin,targets=judge_messages(state,cfg,shallow,plan)
+            judge_input=estimated_tokens(''.join(row['content'] for row in thin))
             for attempt in range(2):
                 raw=await self.model.complete('chat_judge',thin,scope=scope,model=cfg['model'],
                     json_mode=True,max_tokens=64 if attempt==0 else 96,daily_limit=cfg['daily_model_calls'])
@@ -234,7 +238,10 @@ class ChatService:
         target_id = str(decision.get('target_id', current.message_id))
         if target_id not in target_ids:
             raise ValueError('Model selected a message outside this channel context.')
-        await self.call('record', scope, action, reason, {'target_id': target_id, 'prompt': VERSION, 'config': cfg_revision})
+        await self.call('record', scope, action, reason,
+                        {'target_id':target_id,'prompt':VERSION,'config':cfg_revision,'source':decision_source,
+                         'reason_source':decision.get('reason_source','local'),'same_member_followup':plan.followup,
+                         'visible_messages':len(target_ids),'judge_input_estimate':judge_input})
         if action != 'reply':
             return  # wait is reconsidered only after new input; no timer loop of model calls.
         if state.sequence != snapshot or not self.allowed(scope) or revision(self.config(scope))!=cfg_revision:
