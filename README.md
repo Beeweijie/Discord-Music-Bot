@@ -44,6 +44,10 @@ Voice profiles live in `bot_app/features/chat/prompts.py`; identity, factual evi
 vision, web tools and delivery contracts are kept separately in `prompt_rules.py`. The owner's
 core persona stays in server settings. Casual replies can be a few words; no fixed dialogue examples
 or mandatory punchlines are injected into the voice profile.
+The owner-approved Blue Fish card is stored in `bot_app/features/chat/persona_cards.py` as
+`BLUE_FISH_PERSONA`, with the original two-line identity kept verbatim in `BLUE_FISH_CORE`.
+Use the full card as that server's `persona` setting; it is not enabled for other servers by default.
+Its character, interests and social reactions stay separate from the application contracts.
 
 **Automatic thinking** enables bounded low/high reasoning only for complex questions or explicit
 requests. Everyday chat and background jobs stay fast. Reasoning tokens are included in output
