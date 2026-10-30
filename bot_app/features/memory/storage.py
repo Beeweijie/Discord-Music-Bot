@@ -77,6 +77,7 @@ class MemoryRepository:
 
     def ingest(self, event, observed=False):
         scope = event.scope.key
+        content = event.retained_text[:4000]
         with self.db() as db:
             if db.execute('SELECT 1 FROM deleted_messages WHERE scope=? AND message_id=?', (scope, event.message_id)).fetchone():
                 return False
@@ -84,15 +85,15 @@ class MemoryRepository:
             if forgotten and event.created_at <= forgotten[0]:
                 return False
             old = db.execute("SELECT content,deleted FROM messages WHERE scope=? AND id=?", (scope, event.message_id)).fetchone()
-            if old and (old["deleted"] or old["content"] == event.content[:4000]):
+            if old and (old["deleted"] or old["content"] == content):
                 return False
             if old:
-                db.execute("UPDATE messages SET content=?,name=?,revision=revision+1,processed=0 WHERE scope=? AND id=?", (event.content[:4000], event.author_name[:100], scope, event.message_id))
+                db.execute("UPDATE messages SET content=?,name=?,revision=revision+1,processed=0 WHERE scope=? AND id=?", (content, event.author_name[:100], scope, event.message_id))
                 self._invalidate(db, scope, event.message_id)
                 self.bump(db, scope)
             else:
                 db.execute("INSERT INTO messages(scope,id,author,name,content,created,bot,processed,observed) VALUES(?,?,?,?,?,?,?,?,?)",
-                           (scope, event.message_id, event.author_id, event.author_name[:100], event.content[:4000], event.created_at, int(event.is_bot), int(event.is_bot), int(observed)))
+                           (scope, event.message_id, event.author_id, event.author_name[:100], content, event.created_at, int(event.is_bot), int(event.is_bot), int(observed)))
             return True
 
     def recent(self, scope, limit=50):

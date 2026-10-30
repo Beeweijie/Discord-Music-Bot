@@ -5,12 +5,12 @@
   const advanced = [
     ["model", "DeepSeek model", "text"], ["debounce_seconds", "Combine messages for (seconds)", "number"],
     ["max_wait_seconds", "Maximum message-combining wait (seconds)", "number"], ["cooldown_seconds", "Base reply interval (Active adapts up to 8 seconds, longer in busy channels)", "number"],
-    ["hourly_limit", "Spontaneous replies per hour", "number"], ["daily_limit", "Spontaneous replies per 24 hours", "number"],
-    ["daily_model_calls", "Model calls per day", "number"], ["context_messages", "Recent messages to consider", "number"],
+    ["hourly_limit", "Spontaneous replies per hour", "number"], ["daily_limit", "Extra reply-count limit per 24 hours (0: budget only)", "number"],
+    ["daily_model_calls", "Extra model-call limit per day (0: budget only)", "number"], ["context_messages", "Recent messages to consider", "number"],
     ["context_chars", "Maximum context characters", "number"], ["max_reply_chars", "Maximum reply characters", "number"],
     ["quiet_hours", "Quiet hours (HH:MM-HH:MM)", "text"], ["timezone", "Time zone", "text"],
     ["excluded_users", "Excluded member IDs (comma separated)", "text"],
-    ["web_max_calls", "Web requests per reply", "number"], ["web_daily_calls", "Web requests per channel per day", "number"]
+    ["web_max_calls", "Web requests per reply", "number"], ["web_daily_calls", "Extra web-call limit per day (0: budget only)", "number"]
   ];
   for (const [name, title, type] of advanced) {
     const label = document.createElement("label"); label.textContent = title;
@@ -71,6 +71,9 @@
       const labels = {ready:"Ready", missing_api_key:"API key required", not_running:"Not running", unavailable:"Unavailable; check Logs"};
       const webLabels = {ready:"Ready", not_used:"Not used yet", unavailable:"Recent lookup failed"};
       document.getElementById("chat-health").textContent = `Model: ${labels[health.state] || health.state}. Web search: ${config.web_enabled ? (webLabels[health.web_search] || "Ready when needed") : "Off"}. ${health.chat_error ? "Recent request failed; check Logs." : "No recent chat errors."}`;
+      const budget = health.budget;
+      document.getElementById("chat-budget").textContent = budget ? `¥${budget.spent_cny.toFixed(4)} used of ¥${budget.limit_cny.toFixed(2)} · ¥${budget.reserved_cny.toFixed(4)} reserved · resets at midnight ${budget.timezone} (${budget.day})` : "Budget available when the bot is running.";
+      if (window.loadPersona) await window.loadPersona(guild, guilds.find(item => item.id === guild).channels, config.channels);
       const usage = document.getElementById("chat-usage"); usage.replaceChildren();
       for (const row of health.usage || []) {
         const hit = row.cache_hit_tokens || 0, miss = row.cache_miss_tokens || 0;

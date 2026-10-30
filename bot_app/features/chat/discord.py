@@ -2,6 +2,7 @@
 import discord
 from discord.ext import commands
 from bot_app.shared.identity import Scope, MessageEvent
+from bot_app.features.vision.api import discord_image
 
 class Chat(commands.Cog):
     def __init__(self, bot, runtime):
@@ -28,18 +29,22 @@ class Chat(commands.Cog):
                               or getattr(getattr(replied, 'author', None), 'id', None) == me.id))
         cfg = self.bot.management.get_settings('chat', message.guild.id)
         direct = direct or any(message.content.lstrip().casefold().startswith(name.casefold()) for name in cfg['aliases'])
+        images = tuple(image for attachment in getattr(message,'attachments',())
+                       if (image:=discord_image(attachment,message.channel.id)))[:2]
         return MessageEvent(Scope(str(message.guild.id), str(message.channel.id)), str(message.id), str(message.author.id),
                             message.author.display_name, message.content, message.created_at.timestamp(),
                             str(reference.message_id) if reference else '', direct, message.author.bot,
-                            str(me.id) if me else '')
+                            str(me.id) if me else '', images=images)
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if not message.guild or message.author.bot or message.webhook_id or not message.content or message.content.startswith('!'):
+        if not message.guild or message.author.bot or message.webhook_id or message.content.startswith('!'):
             return
         if (await self.bot.get_context(message)).valid:
             return
         event = self.event(message)
+        if not event.content and not event.images:
+            return
         async def can_send():
             if not self.runtime.chat.allowed(event.scope.key):
                 return False
@@ -68,7 +73,7 @@ class Chat(commands.Cog):
 
     @commands.Cog.listener()
     async def on_raw_message_edit(self, payload):
-        if not payload.guild_id or 'content' not in payload.data:
+        if not payload.guild_id or not {'content','attachments'} & payload.data.keys():
             return
         scope = Scope(str(payload.guild_id), str(payload.channel_id))
         if not self.runtime.chat.allowed(scope.key):

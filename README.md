@@ -17,10 +17,23 @@ keyword recall without an embedding service. `/memory` manages your own channel 
 Both features start disabled. Chat does not execute music controls or arbitrary commands.
 Read-only web search can be enabled separately with **Allow the bot to search the web when needed**.
 The model then chooses whether to call DeepSeek's official Search/Fetch APIs using the same API key,
-and cites retrieved sources. Casual chat does not require a lookup. Tool calls have per-reply/day caps.
+and cites retrieved sources. Casual chat does not require a lookup. Tool calls have per-reply caps.
 Choose **Active** participation for quicker, unmentioned follow-ups and more spontaneous replies.
 Its timing policy adapts to questions, ongoing exchanges and channel activity; it never needs an @
 to consider joining the discussion. Commands and mentions addressed to other bots remain protected.
+
+Image understanding and gradual persona development have separate opt-in switches. Discord image
+attachments are described once for context; raw images and signed attachment URLs are not retained.
+The owner-written core persona stays fixed. Learning proposes at most one 80-character habit per
+review, requires evidence plus an independent consistency audit, and becomes less frequent as
+conversation accumulates. Occasional feedback questions fit into normal replies; there are no idle
+interviews. Review and revert accepted changes per channel in **Persona development**.
+
+All AI features share a default **¥1 daily budget**, reset at local midnight in Australia/Sydney.
+Set `DEEPSEEK_DAILY_BUDGET_CNY` and `DEEPSEEK_BUDGET_TIMEZONE` in `.env`. Requests reserve a
+conservative maximum before sending, then settle reported usage with cache discounts. Official
+peak rates verified on 2026-10-31 deliberately overestimate off-peak bills; the provider's bill
+is authoritative. Unknown outcomes retain their charge. Daily count ceilings are optional (0: off).
 
 Prompts keep stable history before changing time/retrieval/task data to support DeepSeek's
 prefix cache. The dashboard displays actual cache hit/miss input tokens and output tokens;

@@ -25,6 +25,7 @@ class MemoryService:
         self.error = None
         self.semantic_state = "disabled"
         self.scopes = set()
+        self.on_forget = None
 
     async def call(self, method, *args, **kwargs):
         return await asyncio.get_running_loop().run_in_executor(self.executor, functools.partial(getattr(self.repository, method), *args, **kwargs))
@@ -61,7 +62,7 @@ class MemoryService:
 
     async def ingest(self, event, observed=False):
         cfg = self.config(event.scope.key)
-        if not cfg['enabled'] or not self.allowed_scope(event.scope.key) or not self.author_allowed(event.scope.key, event.author_id) or contains_secret(event.content):
+        if not cfg['enabled'] or not self.allowed_scope(event.scope.key) or not self.author_allowed(event.scope.key, event.author_id) or contains_secret(event.retained_text):
             return False
         changed = await self.call('ingest', event, observed)
         self.scopes.add(event.scope.key)
@@ -102,7 +103,10 @@ class MemoryService:
         return await self.call('list', scope, subject=subject, candidates=candidates, limit=limit, offset=offset, history=history)
 
     async def forget(self, scope, actor=None, memory_id=None):
-        return await self.call('forget', scope, actor=actor, memory_id=memory_id)
+        result = await self.call('forget', scope, actor=actor, memory_id=memory_id)
+        if self.on_forget:
+            await self.on_forget(scope,actor)
+        return result
 
     async def correct(self, scope, memory_id, text, actor=None):
         return await self.call('correct', scope, memory_id, text, actor=actor)

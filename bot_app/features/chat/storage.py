@@ -36,7 +36,7 @@ class ChatRepository:
     def allowed(self, scope, hour, day):
         with self.db() as db:
             rows = db.execute("SELECT created FROM deliveries WHERE scope=? AND autonomous=1 AND state IN ('prepared','sending','sent','unknown') AND created>?", (scope, time.time() - 86400)).fetchall()
-            return len(rows) < day and sum(row[0] > time.time() - 3600 for row in rows) < hour
+            return (not day or len(rows) < day) and sum(row[0] > time.time() - 3600 for row in rows) < hour
 
     def reserve(self, scope, batch, content, autonomous):
         with self.db() as db:

@@ -58,10 +58,16 @@ bot_app/
       discord.py                /memory member commands
       http.py web/              inspection, approval, correction, forgetting, export
     web_search/api.py           public read-only DeepSeek Search/Fetch, URL/query validation, scoped cache
+    persona/
+      api.py policy.py          gradual reflection, independent consistency audit, feedback-question pacing
+      storage.py                channel evidence, maturity counters, reversible single-slot changes
+      http.py web/              learned habits and revision administration
+    vision/api.py               bounded Discord attachment validation and cached native image descriptions
   shared/
     identity.py                 immutable Discord scope/member/message identities
     revisions.py redaction.py   small shared primitives
     llm/deepseek.py             HTTP, concurrency, budgets, usage/cache accounting
+    llm/pricing.py              verified conservative CNY rates and maximum-cost estimates
     paths.py logging_setup.py diagnostics.py
     runtime.py process_runtime.py security.py logs.py contracts.py
   application/ domain/ infrastructure/ presentation/
@@ -173,7 +179,7 @@ blocks installation; rollback restores application code/environment and retains 
    a reply. Participate mode recalls full memory, then generates a short natural response.
    With web search enabled, the reply model can choose `web_search` or `read_webpage` through
    function calling. Search/Fetch use the official DeepSeek endpoints and existing API key.
-   The loop caps calls per reply and UTC day, permits only public read-only retrieval, validates
+   The loop caps calls per reply and the shared monetary budget, permits only public read-only retrieval, validates
    URLs/queries, and treats retrieved pages as untrusted evidence. Page reading is limited to
    URLs supplied in the current message or returned by search. Successful facts cite sources;
    failures are returned to the model without fabricated evidence. Stale work stops between calls.
@@ -185,8 +191,24 @@ blocks installation; rollback restores application code/environment and retains 
    incomplete deliveries. A successful bot message joins context without triggering itself.
 
 `wait` is reconsidered when new input arrives; it does not start a repeated model-call timer.
-This implementation is text-only. Its tools are bounded public search and page reading;
+Native image descriptions feed the same scoped text context. Its executable tools are bounded public search and page reading;
 it does not execute music commands, shell operations, autonomous scheduled messages or QQ/WeChat actions.
+
+Image-only messages are admitted. Only bounded image attachments on the current Discord
+channel's CDN path are accepted, at most two per message. One native vision request yields
+attributed, fallible descriptions, cached for ten minutes. Raw images/signed URLs remain in
+process memory; retained memory contains descriptions only. Edits/deletes invalidate the cache.
+
+The injected persona service observes admitted human messages and successful web evidence.
+Its per-channel counter drives a decreasing frequency from roughly one review per 12 messages
+towards one per 120, with a minimum interval rising from 10 towards 45 minutes. A review may
+propose one 80-character optional slot, then a separate model audit checks consistency,
+grounding, gradualness and reasonableness. Only an approved change commits transactionally,
+with source validation and an invalidation epoch. The fixed owner identity is never rewritten.
+Mature stages require more sources/higher confidence. Early natural replies may occasionally
+ask for persona feedback; stable personas stop these questions. No idle questioning scheduler
+exists. Deletion/forgetting invalidates derived notes and revision text; the dashboard can revert
+the latest available revision of each slot. Manual core changes isolate old growth notes.
 
 ## Memory flow
 
@@ -232,18 +254,23 @@ persistence/eviction and discovers common prefixes. Moving windows, edits, ident
 changes and cold caches reduce reuse. Cache is not durable bot memory. See the
 [official caching guide](https://api-docs.deepseek.com/guides/kv_cache/).
 
-The usage ledger reserves requests before network I/O, survives restart and groups judge +
-reply into a shared per-channel daily family budget. Global request/token ceilings cover all
-AI calls; extraction and embedding have their own channel budgets. Days use UTC; autonomous
-send quotas use rolling hours/24 hours. Token limits conservatively count all input including
-cached input. At most two model/embedding requests run concurrently. Network failures trigger
-cooldown rather than unbounded retries.
+The usage ledger atomically reserves maximum CNY cost before network I/O and survives restart.
+All AI features share a default ¥1/day instance budget, reset at midnight in the configured
+time zone (Australia/Sydney by default). Text UTF-8 bytes, image-token caps and max_tokens
+bound reservations. Unknown outcomes keep their reserved cost; reported usage releases the
+unused amount. Search/Fetch reserve ¥0.005 each and settle only successful nonempty results.
+Optional request/token/channel count ceilings still use UTC and accept zero to disable.
+Autonomous send quotas use rolling hours/24 hours. At most two model/embedding requests run
+concurrently. Network failures trigger cooldown rather than unbounded retries.
 
 Usage records distinguish model, stage, status, input/output tokens and reported cache hit/miss
 tokens. Missing cache metrics remain unknown. The dashboard calculates hit rate by tokens over
-reported requests. Monetary cost depends on provider/model/current peak pricing:
+reported requests. Monetary accounting uses verified 2026-10-31 official peak prices:
 `cached input × cached rate + uncached input × uncached rate + output × output rate`.
-No fixed price or assumed hit rate is embedded in scheduling.
+Peak prices deliberately overestimate off-peak/holiday billing. Rates live centrally in
+`shared/llm/pricing.py` and must be maintained when the provider changes prices. External
+embedding providers require an explicit conservative per-request CNY ceiling. The dashboard
+shows estimated settled/reserved money; the provider's invoice remains authoritative.
 
 ## Configuration, persistence and lifetime
 
@@ -256,6 +283,7 @@ No fixed price or assumed hit rate is embedded in scheduling.
 | Chat decisions/deliveries | `data/chat/chat.sqlite3` | bounded decisions, send idempotency |
 | Source/memory/evidence/jobs | `data/memory/memory.sqlite3` | WAL, schema metadata, per-channel scope |
 | Model/cache usage | `data/ai/usage.sqlite3` | additive accounting migration, durable reservations |
+| Persona growth | `data/ai/persona.sqlite3` | channel evidence, counters, source invalidation, reversible revisions |
 | Runtime/tray IPC | `runtime/` | instance-bound atomic files |
 
 Chat and memory default to disabled; observe is the initial participation mode. Changes apply
@@ -264,7 +292,7 @@ is logged without taking existing bot features offline. A broken memory store al
 short-term chat with empty recall; it is never silently replaced with an empty database.
 
 One process owns the event loop, channel workers and per-feature SQLite executors. Shut down
-chat workers, memory worker/database executor and model HTTP session explicitly. Do not run
+chat workers, persona tasks/executor, memory worker/database executor and model HTTP session explicitly. Do not run
 multiple bot/API workers against the same data. Stop the bot before copying SQLite files,
 or use SQLite's backup API; copying an active WAL main file alone is not a safe backup.
 

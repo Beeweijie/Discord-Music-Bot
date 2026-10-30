@@ -4,11 +4,11 @@
   const form = document.getElementById("memory-form");
   const advanced = [["model", "Extraction model", "text"], ["batch_messages", "Messages per extraction batch", "number"],
     ["batch_seconds", "Maximum batch wait (seconds)", "number"], ["retention_days", "Retain original messages (days)", "number"],
-    ["recall_limit", "Memories per reply", "number"], ["daily_model_calls", "Extraction calls per day", "number"]];
+    ["recall_limit", "Memories per reply", "number"], ["daily_model_calls", "Extra extraction-call limit per day (0: budget only)", "number"]];
   for (const [name, title, type] of advanced) {
     const label = document.createElement("label"); label.textContent = title;
     const input = document.createElement("input"); input.name = name; input.type = type; input.required = true;
-    if (type === "number") {input.min = "1"; input.step = "1";}
+    if (type === "number") {input.min = name === "daily_model_calls" ? "0" : "1"; input.step = "1";}
     label.append(input); document.getElementById("memory-advanced").append(label);
   }
   const query = () => new URLSearchParams({guild_id:guild, channel_id:channel, subject_id:document.getElementById("memory-subject").value.trim(), history:document.getElementById("memory-history").checked ? "1" : "0", offset:String(offset), limit:"50"});

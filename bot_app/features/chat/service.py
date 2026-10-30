@@ -7,12 +7,13 @@ import logging
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from bot_app.shared.revisions import revision
 from bot_app.shared.redaction import contains_secret
+from bot_app.shared.llm.deepseek import BudgetExceeded
 from .settings import for_channel
 from .prompts import COMMON, JUDGE, JUDGE_ACTIVE, VERSION
 from .participation import participation_plan
@@ -36,12 +37,13 @@ class ChannelState:
     context_anchor: str = ''
 
 class ChatService:
-    def __init__(self, repository, model, memory, settings_for, web=None):
+    def __init__(self, repository, model, memory, settings_for, web=None, persona=None, vision=None):
         self.repository = repository
         self.model = model
         self.memory = memory
         self.settings_for = settings_for
-        self.replies = ReplyGenerator(model,web)
+        self.persona, self.vision = persona, vision
+        self.replies = ReplyGenerator(model,web,on_web=persona.observe_web if persona else None)
         self.channels = {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='chat-db')
         self.closing = False
@@ -107,6 +109,8 @@ class ChatService:
         if event.is_bot:
             state.processed = state.sequence
             return
+        if self.persona:
+            await self.persona.observe(event)
         now = time.monotonic()
         if state.first_pending == 0:
             state.first_pending = now
@@ -138,6 +142,8 @@ class ChatService:
                     self.last_error = None
                 except asyncio.CancelledError:
                     raise
+                except BudgetExceeded:
+                    await self.call('record',scope,'skip','daily_cny_budget')
                 except Exception as error:
                     self.last_error = type(error).__name__
                     await self.call('record', scope, 'error', self.last_error)
@@ -177,7 +183,30 @@ class ChatService:
         elif not await self.call('allowed', scope, cfg['hourly_limit'], cfg['daily_limit']):
             await self.call('record', scope, 'skip', 'channel_budget')
             return
+        if self.vision and cfg.get('vision_enabled') and current.images and not current.image_descriptions:
+            try:
+                descriptions = await self.vision.describe(current,cfg)
+            except BudgetExceeded:
+                raise
+            except Exception:
+                descriptions = ('图片识别暂不可用，不能推测图中内容。',)
+            if any(contains_secret(text) for text in descriptions):
+                descriptions = ('图片中可能包含凭据，不保留识别内容。',)
+            if state.sequence!=snapshot:
+                return
+            current = replace(current,image_descriptions=descriptions)
+            state.messages = deque((current if row.message_id==current.message_id else row for row in state.messages),maxlen=100)
+            await self.memory.ingest(current,cfg['mode']=='observe')
+            if self.persona:
+                await self.persona.observe(current)
         prefix = self.model_prefix(scope, state, cfg)
+        persona_epoch = None
+        if self.persona and self.persona.enabled(scope) and self.persona.repository.path.exists():
+            persona_state = await self.persona.status(scope)
+            persona_epoch = persona_state['epoch']
+            learned = [{'slot':row['slot'],'text':row['text']} for row in persona_state['notes']]
+            if learned:
+                prefix[0]['content'] += '\nOptional learned habits JSON (subordinate to the fixed core):\n'+json.dumps(learned,ensure_ascii=False,sort_keys=True)
         memories = []
         memory_revision = revision(self.memory.config(scope))
         epoch = await self.memory_epoch(scope)
@@ -190,6 +219,8 @@ class ChatService:
                    "timezone": cfg['timezone'], "now": datetime.now(ZoneInfo(cfg['timezone'])).isoformat(),
                    'max_reply_characters':cfg['max_reply_chars'],
                    'participation':{'style':cfg['participation_style'],'followup':plan.followup,'recent_messages':plan.activity}}
+        if self.persona:
+            payload['persona_learning'] = await self.persona.guidance(scope)
         if direct:
             decision = {"action": "reply", "reason": "addressed", "target_id": current.message_id}
         else:
@@ -223,6 +254,8 @@ class ChatService:
             pass
         async def still_current():
             latest_epoch = await self.memory_epoch(scope)
+            if persona_epoch is not None and (await self.persona.status(scope))['epoch']!=persona_epoch:
+                return False
             return (state.sequence == snapshot and latest_epoch == epoch and self.allowed(scope)
                     and revision(self.config(scope)) == cfg_revision
                     and revision(self.memory.config(scope)) == memory_revision and await state.can_send())
@@ -270,6 +303,8 @@ class ChatService:
         state.last_sent = time.monotonic()
         state.last_author = current.author_id
         state.messages.append(sent_event)
+        if self.persona and payload.get('persona_learning',{}).get('ask_for_feedback') and any(mark in response for mark in ('?','？')):
+            await self.persona.asked(scope)
         try:
             await self.memory.ingest(sent_event, False)
         except Exception:
@@ -294,14 +329,18 @@ class ChatService:
         visible = [message for message in state.messages if message.author_id not in cfg['excluded_users']]
         start = next((i for i, row in enumerate(visible) if row.message_id == state.context_anchor), 0)
         rows = [row.context() for row in visible[start:]]
-        total = sum(len(row['text']) for row in rows)
+        def size(row):
+            return len(row['text'])+sum(len(text) for text in row.get('image_observations',[]))
+        total = sum(size(row) for row in rows)
         if len(rows) > cfg['context_messages'] or total > cfg['context_chars']:
             target_count = max(1, cfg['context_messages'] * 3 // 4)
             target_chars = cfg['context_chars'] * 3 // 4
             while len(rows) > 1 and (len(rows) > target_count or total > target_chars):
-                total -= len(rows.pop(0)['text'])
+                total -= size(rows.pop(0))
         if rows:
-            rows[-1]['text'] = rows[-1]['text'][-cfg['context_chars']:]
+            observations = rows[-1].get('image_observations',[])
+            remaining = cfg['context_chars']-sum(len(text) for text in observations)
+            rows[-1]['text'] = rows[-1]['text'][-max(0,remaining):] if remaining>0 else ''
             state.context_anchor = rows[0]['message_id']
         identity = {key: cfg[key] for key in ('name', 'persona', 'interests', 'aliases', 'model')}
         identity['bot_user_id'] = next((message.bot_user_id for message in reversed(visible) if message.bot_user_id), '')
@@ -312,6 +351,10 @@ class ChatService:
         return prefix
 
     async def edited(self, event):
+        if self.vision:
+            self.vision.invalidate(event.scope.key,event.message_id)
+        if self.persona:
+            await self.persona.forget(event.scope.key,identifier=event.message_id,deleted=False)
         if contains_secret(event.content) or event.author_id in self.config(event.scope.key)['excluded_users']:
             await self.deleted(event.scope.key, event.message_id)
             return
@@ -322,8 +365,14 @@ class ChatService:
             state.processed = state.sequence
             state.wake.set()
         await self.memory.ingest(event, self.config(event.scope.key)['mode'] == 'observe')
+        if self.persona:
+            await self.persona.observe(event)
 
     async def deleted(self, scope, message_id):
+        if self.vision:
+            self.vision.invalidate(scope,message_id)
+        if self.persona:
+            await self.persona.forget(scope,identifier=message_id)
         state = self.channels.get(scope)
         if state:
             state.messages = deque((row for row in state.messages if row.message_id != message_id), maxlen=100)
@@ -333,6 +382,8 @@ class ChatService:
         await self.memory.delete_message(scope, message_id)
 
     async def clear_context(self, scope):
+        if self.vision:
+            self.vision.invalidate(scope)
         state = self.channels.get(scope)
         if state:
             state.sequence += 1

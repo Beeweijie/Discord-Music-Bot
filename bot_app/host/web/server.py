@@ -58,6 +58,8 @@ def create_app(management):
     register_ai(app, management, guild_scope)
     from bot_app.features.memory.http import register as register_memory
     register_memory(app, management, guild_scope)
+    from bot_app.features.persona.http import register as register_persona
+    register_persona(app,management,guild_scope)
 
     async def all_settings(request):
         return web.json_response(management.all_settings(guild_scope(request)))

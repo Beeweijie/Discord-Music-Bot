@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light"><title>喵酱 · Bot Dashboard</title>
   <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
-  <script src="/ai.js" defer></script><script src="/memory.js" defer></script>
+  <script src="/ai.js" defer></script><script src="/memory.js" defer></script><script src="/persona.js" defer></script>
   <link rel="stylesheet" href="/ai.css">
 </head>
 <body>
@@ -93,9 +93,11 @@
             <label>Default participation<select name="mode"><option value="observe">Observe — judge without sending</option><option value="participate">Participate — send replies</option></select></label>
             <label>Participation style<select name="participation_style"><option value="balanced">Balanced</option><option value="active">Active — faster follow-ups and more spontaneous replies</option></select></label>
             <label>Bot name<input name="name" maxlength="100" required></label>
-            <label class="playlist-field">Personality<textarea name="persona" rows="4" maxlength="6000" required></textarea></label>
+            <label class="playlist-field">Core personality<textarea name="persona" rows="4" maxlength="6000" required></textarea><small>Learning adds small habits separately. It never rewrites this identity.</small></label>
             <label>Interests<input name="interests" maxlength="500"></label>
             <label class="inline-check"><input name="web_enabled" type="checkbox">Allow the bot to search the web when needed</label>
+            <label class="inline-check"><input name="vision_enabled" type="checkbox">Understand image attachments in allowed channels</label>
+            <label class="inline-check"><input name="persona_learning_enabled" type="checkbox">Gradually develop habits from conversations and web research</label>
             <label>Names to respond to<input name="aliases" maxlength="800"><small>Separate names with commas.</small></label>
           </div>
           <fieldset><legend>Allowed channels</legend><div id="chat-channels" class="channel-options">Loading channels...</div></fieldset>
@@ -103,7 +105,8 @@
           <div class="form-footer"><span id="chat-save-status" role="status">Chat is disabled until configured.</span><button type="submit" class="primary">Save chat settings</button></div>
         </form>
         <article class="card"><div class="section-heading"><h2>Recent participation decisions</h2><button id="chat-decisions-refresh" type="button">Refresh decisions</button></div><p class="muted">Observe mode records these decisions without posting to Discord.</p><div id="chat-decisions" aria-live="polite">No decisions loaded.</div></article>
-        <article class="card"><h2>Model usage</h2><p class="muted">Requests and tokens by task. Daily accounting uses UTC.</p><div id="chat-usage">No model requests recorded.</div></article>
+        <article class="card"><h2>Daily AI budget</h2><p id="chat-budget" role="status">Loading budget...</p><p class="muted">Shared across chat, search, images, memory and persona development. Conservative peak-price estimates include reported cache discounts; uncertain requests retain their reservation. Configure the limit and reset time zone in the local .env file.</p><details><summary>Requests and tokens by task (UTC)</summary><div id="chat-usage">No model requests recorded.</div></details></article>
+        <article class="card"><div class="section-heading"><h2>Persona development</h2><button id="persona-refresh" type="button">Refresh development</button></div><p class="muted">One small habit at a time, with evidence and a separate consistency review. Early learning is more frequent; established habits need stronger evidence to change.</p><label for="persona-channel">Channel</label><select id="persona-channel" disabled><option value="">Select a channel</option></select><p id="persona-status" role="status">Select a connected server to review development.</p><div id="persona-notes"></div><details><summary>Revision history</summary><div id="persona-history">No revisions yet.</div></details></article>
       </section>
       <section id="page-memory" class="page" hidden>
         <div class="page-heading"><div><h1>Memory</h1><p class="muted">Review what the bot remembers, where it came from, and what needs correcting.</p></div><button id="memory-refresh" type="button">Reload</button></div>

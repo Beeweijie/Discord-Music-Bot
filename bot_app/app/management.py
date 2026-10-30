@@ -110,7 +110,7 @@ class ManagementService:
             memory = await self.ai.memory.stats(prefix) if self.ai.memory.repository.path.exists() else {'state': 'empty', 'memories': [], 'jobs': []}
         except Exception as error:
             memory = {'state': 'error', 'error': type(error).__name__, 'memories': [], 'jobs': []}
-        return dict(self.ai.health(), usage=await self.ai.model.usage(prefix), memory=memory)
+        return dict(self.ai.health(), usage=await self.ai.model.usage(prefix), memory=memory,budget=await self.ai.model.budget())
 
     async def chat_decisions(self, guild_id):
         await self.ai_status(guild_id)

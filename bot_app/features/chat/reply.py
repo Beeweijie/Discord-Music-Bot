@@ -10,8 +10,9 @@ TOOLS=[{'type':'function','function':{'name':'web_search','description':'Search 
 
 
 class ReplyGenerator:
-    def __init__(self,model,web=None):
+    def __init__(self,model,web=None,on_web=None):
         self.model,self.web=model,web
+        self.on_web=on_web
 
     async def generate(self,prefix,task,payload,cfg,*,scope,current,still_current,record_tool):
         messages=prefix+[task(REPLY,payload)]
@@ -45,6 +46,8 @@ class ReplyGenerator:
                     result=await self.web.execute(name,arguments,scope=scope,daily_limit=cfg['web_daily_calls'])
                     allowed_urls.update(row['url'] for row in result.get('results',[]))
                     await record_tool(name,'completed')
+                    if self.on_web:
+                        await self.on_web(scope,result)
                 except Exception:
                     result={'error':'Web retrieval failed or was not allowed. No new evidence was obtained; do not claim successful lookup.'}
                     await record_tool(name,'failed')

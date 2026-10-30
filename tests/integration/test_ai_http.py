@@ -97,7 +97,7 @@ class DashboardAITests(unittest.IsolatedAsyncioTestCase):
         self.memory_id=ids[0]
 
     async def test_dashboard_assets_and_scoped_memory_are_available(self):
-        for path in ['/','/app.js','/ai.js','/ai.css','/memory.js']:
+        for path in ['/','/app.js','/ai.js','/ai.css','/memory.js','/persona.js']:
             response=await self.client.get(path)
             self.assertEqual(response.status,200,path)
         response=await self.client.get('/api/v1/memory?guild_id=1&channel_id=2')
@@ -133,3 +133,11 @@ class DashboardAITests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.management.get_settings('chat','1')['enabled'])
         response=await self.client.get('/api/v1/ai/status?guild_id=1')
         self.assertEqual((await response.json())['state'],'missing_api_key')
+
+    async def test_persona_routes_validate_channel_and_protect_writes(self):
+        self.assertEqual((await self.client.get('/api/v1/persona?guild_id=1&channel_id=2')).status,200)
+        self.assertEqual((await self.client.get('/api/v1/persona?guild_id=1&channel_id=9')).status,400)
+        response=await self.client.post('/api/v1/persona/revert',json={'guild_id':'1','channel_id':'2','revision_id':1})
+        self.assertEqual(response.status,403)
+        response=await self.client.post('/api/v1/persona/revert',headers=self.headers,json={'guild_id':'1','channel_id':'2','revision_id':1})
+        self.assertEqual(response.status,400)

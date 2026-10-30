@@ -9,10 +9,16 @@ import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+from .pricing import NANO, WEB, SOURCE, money, reserve_cost, actual_cost
 
 import aiohttp
 
 class ModelUnavailable(RuntimeError):
+    pass
+
+
+class BudgetExceeded(ModelUnavailable):
     pass
 
 
@@ -47,24 +53,48 @@ class DeepSeekClient:
         for name in ('cache_hit_tokens', 'cache_miss_tokens', 'cache_reported'):
             if name not in columns:
                 db.execute(f'ALTER TABLE usage ADD COLUMN {name} INTEGER DEFAULT 0')
+        columns = {row[1] for row in db.execute('PRAGMA table_info(usage)')}
+        for name, definition in (('budget_day', 'TEXT'), ('reserved_nano', 'INTEGER DEFAULT 0'),
+                                 ('cost_nano', 'INTEGER DEFAULT 0'), ('priced', 'INTEGER DEFAULT 0')):
+            if name not in columns:
+                db.execute(f'ALTER TABLE usage ADD COLUMN {name} {definition}')
+        # Preserve old accounting; charge known historical usage conservatively once.
+        for row in db.execute('SELECT id,model,stage,input_tokens,output_tokens,cache_hit_tokens,created,status FROM usage WHERE priced=0').fetchall():
+            identifier, model, stage, prompt, output, hit, created, status = row
+            day = datetime.fromtimestamp(created or 0, ZoneInfo(os.getenv('DEEPSEEK_BUDGET_TIMEZONE', 'Australia/Sydney'))).date().isoformat()
+            try:
+                cost = WEB if stage.startswith('web_') and status == 'completed' else actual_cost(model, prompt, output, hit)
+            except ValueError:
+                cost = 0  # legacy unknown models are historical only
+            db.execute('UPDATE usage SET priced=1,cost_nano=?,budget_day=? WHERE id=?', (cost, day, identifier))
 
-    def _reserve(self, scope, stage, model, limit):
+    @staticmethod
+    def budget_day():
+        return datetime.now(ZoneInfo(os.getenv('DEEPSEEK_BUDGET_TIMEZONE', 'Australia/Sydney'))).date().isoformat()
+
+    def _reserve(self, scope, stage, model, limit, estimated=0):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute('BEGIN IMMEDIATE')
             self._schema(db)
             day = datetime.now(timezone.utc).date().isoformat()
-            global_limit = int(os.getenv("DEEPSEEK_DAILY_REQUEST_LIMIT", "1000"))
+            global_limit = int(os.getenv("DEEPSEEK_DAILY_REQUEST_LIMIT", "0"))
             total = db.execute("SELECT count(*) FROM usage WHERE day=?", (day,)).fetchone()[0]
             family = stage.split('_')[0] + '_%'
             scoped = db.execute("SELECT count(*) FROM usage WHERE day=? AND scope=? AND stage LIKE ?", (day, scope, family)).fetchone()[0]
             tokens = db.execute("SELECT coalesce(sum(input_tokens+output_tokens),0) FROM usage WHERE day=?", (day,)).fetchone()[0]
-            if total >= global_limit or scoped >= limit or tokens >= int(os.getenv("DEEPSEEK_DAILY_TOKEN_LIMIT", "1000000")):
+            token_limit = int(os.getenv('DEEPSEEK_DAILY_TOKEN_LIMIT','0'))
+            if (global_limit and total >= global_limit) or (limit and scoped >= limit) or (token_limit and tokens >= token_limit):
                 raise ModelUnavailable("Daily model budget reached.")
+            budget_day = self.budget_day()
+            spent = db.execute('SELECT coalesce(sum(cost_nano + reserved_nano),0) FROM usage WHERE budget_day=?', (budget_day,)).fetchone()[0]
+            if spent + estimated > money(os.getenv('DEEPSEEK_DAILY_BUDGET_CNY', '1')):
+                raise BudgetExceeded('Daily CNY budget has insufficient unreserved funds.')
             request_id = uuid.uuid4().hex
-            db.execute("INSERT INTO usage(id,day,scope,stage,model,status,created) VALUES(?,?,?,?,?,'reserved',?)", (request_id, day, scope, stage, model, time.time()))
+            db.execute("INSERT INTO usage(id,day,scope,stage,model,status,created,budget_day,reserved_nano,priced) VALUES(?,?,?,?,?,'reserved',?,?,?,1)", (request_id, day, scope, stage, model, time.time(), budget_day, estimated))
             return request_id
 
-    def _finish(self, request_id, status, usage):
+    def _finish(self, request_id, status, usage, *, billable=None, no_charge=False):
         usage = usage if isinstance(usage, dict) else {}
         def tokens(key):
             value = usage.get(key, 0)
@@ -78,8 +108,18 @@ class DeepSeekClient:
             reported = type(hit) is int and 0 <= hit <= total
             miss = total - hit if reported else 0
         with closing(sqlite3.connect(self.path)) as db, db:
-            db.execute("UPDATE usage SET status=?,input_tokens=?,output_tokens=?,cache_hit_tokens=?,cache_miss_tokens=?,cache_reported=? WHERE id=?",
-                       (status, total, tokens('completion_tokens'), hit if reported else 0, miss if reported else 0, int(reported), request_id))
+            model, stage, reserved = db.execute('SELECT model,stage,reserved_nano FROM usage WHERE id=?', (request_id,)).fetchone()
+            if no_charge:
+                cost = 0
+            elif billable is not None:
+                cost = WEB if billable else 0
+            elif (type(usage.get('prompt_tokens')) is int and type(usage.get('completion_tokens')) is int
+                  and usage['prompt_tokens']>=0 and usage['completion_tokens']>=0):
+                cost = actual_cost(model, total, tokens('completion_tokens'), hit if reported else 0)
+            else:
+                cost = reserved  # timeout, crash or absent usage: never refund an uncertain bill
+            db.execute("UPDATE usage SET status=?,input_tokens=?,output_tokens=?,cache_hit_tokens=?,cache_miss_tokens=?,cache_reported=?,cost_nano=?,reserved_nano=0 WHERE id=?",
+                       (status, total, tokens('completion_tokens'), hit if reported else 0, miss if reported else 0, int(reported), cost, request_id))
 
     async def complete(self, stage, messages, *, scope, model="deepseek-flash", json_mode=False, max_tokens=500, daily_limit=300,
                        tools=None, tool_choice='auto'):
@@ -88,9 +128,14 @@ class DeepSeekClient:
         if time.monotonic() < self.retry_at:
             raise ModelUnavailable("Model service is cooling down after repeated failures.")
         async with self.slots:
+            try:
+                estimated = reserve_cost(model, messages, max_tokens, tools)
+            except ValueError as error:
+                raise ModelUnavailable(str(error)) from error
             async with self.accounting:
-                request_id = await asyncio.to_thread(self._reserve, scope, stage, model, daily_limit)
+                request_id = await asyncio.to_thread(self._reserve, scope, stage, model, daily_limit, estimated)
             status, usage = "unknown", {}
+            no_charge = False
             try:
                 if self.session is None or self.session.closed:
                     self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
@@ -103,6 +148,7 @@ class DeepSeekClient:
                 async with self.session.post(self.base_url + "/chat/completions", json=body,
                                              headers={"Authorization": "Bearer " + self.key}) as response:
                     if response.status != 200:
+                        no_charge = 400 <= response.status < 500
                         raise ModelUnavailable(f"Model request failed (HTTP {response.status}).")
                     result = await bounded_json(response)
                 usage = result.get("usage", {})
@@ -148,7 +194,7 @@ class DeepSeekClient:
                     raise
                 raise ModelUnavailable("Model transport or response validation failed.") from error
             finally:
-                await asyncio.shield(asyncio.to_thread(self._finish, request_id, status, usage))
+                await asyncio.shield(asyncio.to_thread(self._finish, request_id, status, usage, no_charge=no_charge))
 
     async def web_request(self, kind, arguments, *, scope, daily_limit=60):
         """DeepSeek's official read-only Search/Fetch APIs; no direct target-site requests."""
@@ -156,8 +202,9 @@ class DeepSeekClient:
             raise ModelUnavailable('Web search is not configured.')
         async with self.slots:
             async with self.accounting:
-                request_id=await asyncio.to_thread(self._reserve,scope,'web_'+kind,'deepseek-'+kind,daily_limit)
+                request_id=await asyncio.to_thread(self._reserve,scope,'web_'+kind,'deepseek-'+kind,daily_limit,WEB)
             status='unknown'
+            billable=None
             try:
                 if self.session is None or self.session.closed:
                     self.session=aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
@@ -165,11 +212,13 @@ class DeepSeekClient:
                 async with self.session.post(base+'/v1/tools/'+kind,json=arguments,
                         headers={'Authorization':'Bearer '+self.key},timeout=aiohttp.ClientTimeout(total=15)) as response:
                     if response.status!=200:
+                        billable=False
                         raise ModelUnavailable(f'Web request failed (HTTP {response.status}).')
                     result=await bounded_json(response)
                 if not isinstance(result,dict):
                     raise ModelUnavailable('Invalid web response.')
                 status='completed'
+                billable=bool(result.get('results')) if kind=='search' else bool(result.get('content'))
                 return result
             except asyncio.CancelledError:
                 raise
@@ -177,20 +226,24 @@ class DeepSeekClient:
                 status='failed'
                 raise ModelUnavailable('Web retrieval unavailable; no evidence was obtained.') from error
             finally:
-                await asyncio.shield(asyncio.to_thread(self._finish,request_id,status,{}))
+                await asyncio.shield(asyncio.to_thread(self._finish,request_id,status,{},billable=billable))
 
     async def embed(self, text, *, scope='embedding'):
         base = os.getenv("EMBEDDING_BASE_URL", "").rstrip("/")
         model = os.getenv("EMBEDDING_MODEL", "")
         if not base or not model:
             return None
+        # External embedding prices are provider-specific. Require an explicit conservative
+        # CNY ceiling per request before including one in the shared monetary budget.
+        if not os.getenv('EMBEDDING_MAX_REQUEST_CNY'):
+            raise ModelUnavailable('Set EMBEDDING_MAX_REQUEST_CNY to include this provider in the CNY budget.')
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         headers = {}
         if os.getenv("EMBEDDING_API_KEY"):
             headers["Authorization"] = "Bearer " + os.environ["EMBEDDING_API_KEY"]
         async with self.accounting:
-            request_id = await asyncio.to_thread(self._reserve, scope, 'embedding_request', model, int(os.getenv('EMBEDDING_DAILY_REQUEST_LIMIT','300')))
+            request_id = await asyncio.to_thread(self._reserve, scope, 'embedding_request', model, int(os.getenv('EMBEDDING_DAILY_REQUEST_LIMIT','300')),money(os.environ['EMBEDDING_MAX_REQUEST_CNY']))
         status, usage = 'unknown', {}
         try:
             async with self.slots, self.session.post(base + "/embeddings", json={"model": model, "input": text[:8000]}, headers=headers) as response:
@@ -209,16 +262,31 @@ class DeepSeekClient:
             status = 'failed'
             raise ModelUnavailable('Embedding unavailable; keyword recall remains usable.') from error
         finally:
-            await asyncio.shield(asyncio.to_thread(self._finish, request_id, status, usage))
+            await asyncio.shield(asyncio.to_thread(self._finish, request_id, status, {}))
 
     async def usage(self, scope_prefix):
         if not self.path.exists():
             return []
         def read():
             with closing(sqlite3.connect(self.path)) as db, db:
+                db.execute('BEGIN IMMEDIATE')
                 self._schema(db)
                 db.row_factory = sqlite3.Row
-                return [dict(row) for row in db.execute("SELECT day,model,stage,status,count(*) requests,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(cache_hit_tokens) cache_hit_tokens,sum(cache_miss_tokens) cache_miss_tokens,sum(cache_reported) cache_reported FROM usage WHERE scope LIKE ? GROUP BY day,model,stage,status ORDER BY day DESC LIMIT 100", (scope_prefix + "%",))]
+                return [dict(row) for row in db.execute("SELECT day,model,stage,status,count(*) requests,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(cache_hit_tokens) cache_hit_tokens,sum(cache_miss_tokens) cache_miss_tokens,sum(cache_reported) cache_reported,sum(cost_nano)/1000000000.0 cost_cny FROM usage WHERE scope LIKE ? GROUP BY day,model,stage,status ORDER BY day DESC LIMIT 100", (scope_prefix + "%",))]
+        return await asyncio.to_thread(read)
+
+    async def budget(self):
+        def read():
+            spent = reserved = 0
+            if self.path.exists():
+                with closing(sqlite3.connect(self.path)) as db, db:
+                    db.execute('BEGIN IMMEDIATE')
+                    self._schema(db)
+                    spent, reserved = db.execute('SELECT coalesce(sum(cost_nano),0),coalesce(sum(reserved_nano),0) FROM usage WHERE budget_day=?', (self.budget_day(),)).fetchone()
+            limit = money(os.getenv('DEEPSEEK_DAILY_BUDGET_CNY', '1'))
+            return dict(day=self.budget_day(), timezone=os.getenv('DEEPSEEK_BUDGET_TIMEZONE','Australia/Sydney'),
+                        limit_cny=limit/NANO, spent_cny=spent/NANO, reserved_cny=reserved/NANO,
+                        remaining_cny=max(0,limit-spent-reserved)/NANO, basis='conservative_peak', price_source=SOURCE)
         return await asyncio.to_thread(read)
 
     async def close(self):

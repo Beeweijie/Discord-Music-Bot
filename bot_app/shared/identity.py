@@ -33,6 +33,8 @@ class MessageEvent:
     direct: bool = False
     is_bot: bool = False
     bot_user_id: str = ''
+    images: tuple = ()
+    image_descriptions: tuple = ()
 
     def __post_init__(self):
         object.__setattr__(self, "message_id", snowflake(self.message_id))
@@ -53,4 +55,9 @@ class MessageEvent:
                 "name": self.author_name[:100], "text": self.content[:4000],
                 "timestamp": self.created_at, "reply_to": self.reply_to,
                 "mentioned_user_ids": self.mentioned_user_ids,
-                "role": "assistant" if self.is_bot else "member"}
+                "role": "assistant" if self.is_bot else "member",
+                "images": len(self.images), "image_observations": list(self.image_descriptions)}
+
+    @property
+    def retained_text(self):
+        return self.content + ''.join('\n[图片观察，模型推断可能有误] '+text for text in self.image_descriptions)

@@ -373,7 +373,7 @@ class GitHubUpdater:
 
     def backup_ai_data(self, job):
         """The bot has stopped; retain a recoverable snapshot without replacing live data."""
-        for name in ('data/memory/memory.sqlite3','data/chat/chat.sqlite3','data/ai/usage.sqlite3'):
+        for name in ('data/memory/memory.sqlite3','data/chat/chat.sqlite3','data/ai/usage.sqlite3','data/ai/persona.sqlite3'):
             path = self.data_path(name)
             if not path.exists():
                 continue
