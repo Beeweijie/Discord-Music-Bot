@@ -263,6 +263,15 @@ class MemoryRepository:
                     scored.append((score, row))
         return [row for _, row in sorted(scored, key=lambda pair: pair[0], reverse=True)[:limit]]
 
+    def shallow(self,scope):
+        with self.db() as db:
+            row=db.execute("SELECT * FROM memories WHERE scope=? AND kind='summary' AND state='active' AND created>? AND (valid_until IS NULL OR valid_until>?) ORDER BY updated DESC LIMIT 1",(scope,time.time()-86400,time.time())).fetchone()
+            if not row:
+                return []
+            result=dict(row)
+            result['sources']=[dict(source) for source in db.execute('SELECT m.author FROM evidence e JOIN messages m ON m.scope=e.scope AND m.id=e.message_id WHERE e.memory_id=? AND m.deleted=0 AND m.revision=e.revision',(row['id'],))]
+            return [result]
+
     def pending_vectors(self, scope):
         return [row for row in self.list(scope, limit=100) if row['kind'] != 'summary']
 

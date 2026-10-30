@@ -9,6 +9,8 @@ from bot_app.shared.paths import BASE_DIR
 from bot_app.features.persona.api import PersonaService
 from bot_app.features.persona.storage import PersonaRepository
 from bot_app.features.vision.api import VisionService
+from bot_app.features.surfing.api import SurfService
+from bot_app.features.surfing.storage import SurfRepository
 
 class AIRuntime:
     def __init__(self, management, data_dir=None):
@@ -29,16 +31,20 @@ class AIRuntime:
                                 self.memory, lambda guild: management.get_settings('chat', guild),web=self.web,
                                 persona=self.persona,vision=self.vision)
         self.memory.on_forget = self.persona.forget
+        self.surf=SurfService(SurfRepository(data_dir/'ai'/'surfing.sqlite3'),self.model,self.web,self.chat,self.persona)
+        self.chat.on_human=self.surf.observe
         self.closed = False
 
     async def start(self):
         await self.chat.start()
         self.memory.start()
+        await self.surf.start()
 
     async def close(self):
         if self.closed:
             return
         self.closed = True
+        await self.surf.close()
         await self.chat.close()
         await self.persona.close()
         await self.memory.close()
@@ -49,4 +55,4 @@ class AIRuntime:
         return {'configured': self.model.configured, 'state': 'ready' if self.model.configured else 'missing_api_key',
                 'chat_error': self.chat.last_error, 'memory_error': self.memory.error,
                 'semantic_search': self.memory.semantic_state, 'web_search':self.web.state, 'vision':self.vision.state,'vision_error':self.vision.error,
-                'persona_error':self.persona.error,'channels': len(self.chat.channels)}
+                'persona_error':self.persona.error,'surfing':self.surf.state,'channels': len(self.chat.channels)}

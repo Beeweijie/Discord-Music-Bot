@@ -2,6 +2,8 @@
 import json
 import re
 from .prompts import REPLY
+from .thinking import ThinkingPlan
+from bot_app.shared.llm.deepseek import ThinkingLimitReached
 
 TOOLS=[{'type':'function','function':{'name':'web_search','description':'Search public web sources when current facts, news, uncertainty or verification require it. Avoid searching for casual chat. Use generic queries without private chat or member identifiers.',
     'parameters':{'type':'object','properties':{'query':{'type':'string'}},'required':['query'],'additionalProperties':False}}},
@@ -14,18 +16,35 @@ class ReplyGenerator:
         self.model,self.web=model,web
         self.on_web=on_web
 
-    async def generate(self,prefix,task,payload,cfg,*,scope,current,still_current,record_tool):
+    async def generate(self,prefix,task,payload,cfg,*,scope,current,still_current,record_tool,thinking=None):
         messages=prefix+[task(REPLY,payload)]
-        options={'scope':scope,'model':cfg['model'],'max_tokens':700,'daily_limit':cfg['daily_model_calls']}
+        thinking=thinking or ThinkingPlan(max_tokens=cfg.get('reply_max_tokens',300))
+        options={'scope':scope,'model':cfg['model'],'max_tokens':thinking.max_tokens,
+                 'thinking':thinking.effort,'daily_limit':cfg['daily_model_calls']}
+        fell_back=False
+        async def complete(**extra):
+            nonlocal fell_back
+            try:
+                return await self.model.complete('chat_reply',messages,**options,**extra)
+            except ThinkingLimitReached:
+                if fell_back or options['thinking']=='none':
+                    raise
+                fell_back=True
+                options.update(thinking='none',max_tokens=cfg.get('reply_max_tokens',300))
+                await record_tool('thinking','bounded_fast_fallback')
+                if not await still_current():
+                    return None
+                return await self.model.complete('chat_reply',messages,**options,**extra)
         if not cfg.get('web_enabled') or self.web is None:
-            return await self.model.complete('chat_reply',messages,**options)
+            return await complete()
         allowed_urls=set(url.rstrip(').,;') for url in re.findall(r'https?://[^\s<>]+',current.content))
         used=0
         for _ in range(cfg['web_max_calls']+2):
             if not await still_current():
                 return None
-            message=await self.model.complete('chat_reply',messages,tools=TOOLS,
-                tool_choice='auto' if used<cfg['web_max_calls'] else 'none',**options)
+            message=await complete(tools=TOOLS,tool_choice='auto' if used<cfg['web_max_calls'] else 'none')
+            if message is None:
+                return None
             calls=message.get('tool_calls') or []
             if not calls:
                 return message.get('content') or ''

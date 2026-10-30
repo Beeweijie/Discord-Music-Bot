@@ -22,6 +22,23 @@ Choose **Active** participation for quicker, unmentioned follow-ups and more spo
 Its timing policy adapts to questions, ongoing exchanges and channel activity; it never needs an @
 to consider joining the discussion. Commands and mentions addressed to other bots remain protected.
 
+Optional **Interest browsing** is deliberately rare: at most two browsing attempts and one shared
+discovery per instance per day, at least six hours apart. After an hour of observation and twenty
+new messages, it can search during a quiet gap in a recently active allowed channel. Weak material
+is skipped; new conversation cancels a pending share. Its ¥0.10 sub-budget is part of the shared
+¥1 daily budget. Previously shared sources are deduplicated across restarts.
+
+Ordinary participation decisions use a thin persona, tiny recent transcript and shallow summary,
+targeting roughly 300 input tokens with at most 64 output tokens. Only a positive decision loads
+full persona/history, image understanding and relevant deep facts/events. Normal replies default
+to 300 output tokens. Optional natural message breaks create at most three short posts from that
+one generation; new input stops unsent parts. One short answer remains one message.
+
+**Automatic thinking** enables bounded low/high reasoning only for complex questions or explicit
+requests. Everyday chat and background jobs stay fast. Reasoning tokens are included in output
+cost, and private reasoning is never posted or retained in memory. Tool continuations preserve
+reasoning only in memory for that reply. An exhausted thinking allowance permits one fast fallback.
+
 Image understanding and gradual persona development have separate opt-in switches. Discord image
 attachments are described once for context; raw images and signed attachment URLs are not retained.
 The owner-written core persona stays fixed. Learning proposes at most one 80-character habit per
@@ -35,8 +52,8 @@ conservative maximum before sending, then settle reported usage with cache disco
 peak rates verified on 2026-10-31 deliberately overestimate off-peak bills; the provider's bill
 is authoritative. Unknown outcomes retain their charge. Daily count ceilings are optional (0: off).
 
-Prompts keep stable history before changing time/retrieval/task data to support DeepSeek's
-prefix cache. The dashboard displays actual cache hit/miss input tokens and output tokens;
+Replies keep stable history before changing time/retrieval/task data to support DeepSeek's
+prefix cache. Thin decisions have their own small stable prefix. The dashboard displays actual cache hit/miss input tokens and output tokens;
 cache availability and hit rate depend on the provider. Reply tool definitions also stay stable;
 actual cache hit metrics remain authoritative. See the complete
 [AI setup, lifecycle and rollout guide](docs/ai-chat-memory.md).

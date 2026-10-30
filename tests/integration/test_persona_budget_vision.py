@@ -293,10 +293,10 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         rows=[json.loads(row['content']) for row in prefix[1:]]
         self.assertLessEqual(sum(len(row['text'])+sum(map(len,row['image_observations'])) for row in rows),2000)
 
-    async def test_image_only_message_is_described_before_judge_and_reply(self):
+    async def test_image_only_message_is_judged_before_paying_for_vision_and_reply(self):
         with tempfile.TemporaryDirectory() as folder:
             cfg=dict(copy.deepcopy(DEFAULTS),enabled=True,channels=['2'],mode='participate',vision_enabled=True)
-            model=SimpleNamespace(complete=AsyncMock(side_effect=['一条蓝色的鱼。',{'action':'reply','reason':'useful','target_id':'100'},'这鱼挺蓝。']))
+            model=SimpleNamespace(complete=AsyncMock(side_effect=[{'action':'reply','reason':'useful','target_id':'100'},'一条蓝色的鱼。','这鱼挺蓝。']))
             memory=MemoryService(MemoryRepository(Path(folder)/'memory.db'),model,lambda _:dict(MEMORY_DEFAULTS,enabled=True),lambda _:True)
             chat=ChatService(ChatRepository(Path(folder)/'chat.db'),model,memory,lambda _:cfg,
                              vision=VisionService(model,loader=AsyncMock(return_value='data:image/png;base64,c3ludGhldGlj')))
@@ -306,8 +306,9 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
                 state.send=AsyncMock(return_value=MessageEvent(Scope('1','2'),'200','99','bot','这鱼挺蓝。',time.time(),is_bot=True))
                 await chat.round('discord:1:2',state,1)
                 state.send.assert_awaited_once()
-                self.assertEqual(model.complete.await_args_list[0].args[0],'vision_describe')
-                self.assertIn('一条蓝色的鱼',model.complete.await_args_list[1].args[1][1]['content'])
+                self.assertEqual(model.complete.await_args_list[0].args[0],'chat_judge')
+                self.assertEqual(model.complete.await_args_list[1].args[0],'vision_describe')
+                self.assertIn('一条蓝色的鱼',model.complete.await_args_list[2].args[1][1]['content'])
                 self.assertIn('图片观察',(await memory.call('recent','discord:1:2'))[0]['content'])
             finally:
                 await chat.close(); await memory.close()

@@ -36,7 +36,7 @@ class WebSearchService:
         self.state='not_used'
         self.cache=OrderedDict()
 
-    async def execute(self,name,arguments,*,scope,daily_limit):
+    async def execute(self,name,arguments,*,scope,daily_limit,budget_pool=''):
         if not isinstance(arguments,dict):
             raise ValueError('Tool arguments must be an object.')
         if name=='web_search':
@@ -55,7 +55,10 @@ class WebSearchService:
             self.cache.move_to_end(key)
             return cached[1]
         try:
-            raw=await self.model.web_request(kind,payload,scope=scope,daily_limit=daily_limit)
+            options={'scope':scope,'daily_limit':daily_limit}
+            if budget_pool:
+                options['budget_pool']=budget_pool
+            raw=await self.model.web_request(kind,payload,**options)
             if kind=='search':
                 if not isinstance(raw.get('results'),list):
                     raise ValueError('Invalid search response.')

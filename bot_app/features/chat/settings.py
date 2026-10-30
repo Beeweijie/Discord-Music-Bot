@@ -11,6 +11,9 @@ DEFAULTS = {
     "quiet_hours": "", "timezone": "Australia/Sydney", "excluded_users": [],
     "participation_style": "balanced", "web_enabled": False, "web_max_calls": 3, "web_daily_calls": 0,
     "vision_enabled": False, "persona_learning_enabled": False,
+    "surf_enabled": False, "thinking_mode": "auto",
+    "reply_max_tokens": 300, "decision_persona": "",
+    "reply_burst_enabled": True,
 }
 EFFECTS = {key: "next_message" for key in DEFAULTS}
 
@@ -20,18 +23,19 @@ def validate(value):
     result = dict(value)
     if type(value["enabled"]) is not bool or value["mode"] not in {"observe", "participate"}:
         raise ValueError("Invalid chat switch or mode.")
-    if any(type(value[key]) is not bool for key in ('web_enabled','vision_enabled','persona_learning_enabled')) or value['participation_style'] not in {'balanced','active'}:
+    if (any(type(value[key]) is not bool for key in ('web_enabled','vision_enabled','persona_learning_enabled','surf_enabled','reply_burst_enabled'))
+            or value['participation_style'] not in {'balanced','active'} or value['thinking_mode'] not in {'off','auto'}):
         raise ValueError('Invalid web search switch or participation style.')
     bounds = {"debounce_seconds": (0, 60), "max_wait_seconds": (1, 120), "cooldown_seconds": (0, 3600),
               "hourly_limit": (1, 100), "daily_limit": (0, 10000), "daily_model_calls": (0, 10000),
               "context_messages": (5, 100), "context_chars": (2000, 40000), "max_reply_chars": (50, 1500),
-              'web_max_calls':(1,5), 'web_daily_calls':(0,10000)}
+              'web_max_calls':(1,5), 'web_daily_calls':(0,10000),'reply_max_tokens':(80,1500)}
     for key, (lo, hi) in bounds.items():
         if type(value[key]) is not int or not lo <= value[key] <= hi:
             raise ValueError(f"{key} must be between {lo} and {hi}.")
     if value["max_wait_seconds"] < value["debounce_seconds"]:
         raise ValueError("Maximum wait must be at least the debounce interval.")
-    for key in ("name", "persona", "interests", "model", "timezone", "quiet_hours"):
+    for key in ("name", "persona", "interests", "model", "timezone", "quiet_hours",'decision_persona'):
         if not isinstance(value[key], str) or len(value[key]) > (6000 if key == "persona" else 500):
             raise ValueError(f"Invalid {key}.")
     if not value["name"].strip() or not value["model"].strip():

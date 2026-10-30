@@ -16,7 +16,8 @@ class ChatRepository:
         db = sqlite3.connect(self.path, timeout=5)
         db.row_factory = sqlite3.Row
         db.executescript('''CREATE TABLE IF NOT EXISTS decisions(id INTEGER PRIMARY KEY,scope TEXT,action TEXT,reason TEXT,created REAL,detail TEXT);
-            CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY,scope TEXT,batch TEXT,state TEXT,content TEXT,created REAL,message_id TEXT,autonomous INTEGER,UNIQUE(scope,batch));''')
+            CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY,scope TEXT,batch TEXT,state TEXT,content TEXT,created REAL,message_id TEXT,autonomous INTEGER,UNIQUE(scope,batch));
+            CREATE TABLE IF NOT EXISTS delivery_parts(delivery_id TEXT,part INTEGER,state TEXT,content TEXT,message_id TEXT,PRIMARY KEY(delivery_id,part));''')
         try:
             with db:
                 yield db
@@ -28,6 +29,7 @@ class ChatRepository:
             db.execute('INSERT INTO decisions(scope,action,reason,created,detail) VALUES(?,?,?,?,?)', (scope, action, reason[:100], time.time(), json.dumps(detail or {}, ensure_ascii=False)))
             db.execute('DELETE FROM decisions WHERE id NOT IN (SELECT id FROM decisions ORDER BY id DESC LIMIT 5000)')
             db.execute('DELETE FROM deliveries WHERE created<?', (time.time() - 30 * 86400,))
+            db.execute('DELETE FROM delivery_parts WHERE delivery_id NOT IN (SELECT id FROM deliveries)')
 
     def recent(self, scope_prefix):
         with self.db() as db:
@@ -48,12 +50,25 @@ class ChatRepository:
         with self.db() as db:
             db.execute('UPDATE deliveries SET state=?,message_id=? WHERE id=?', (state, str(message_id) if message_id else None, delivery_id))
 
+    def prepare_parts(self,delivery_id,parts):
+        with self.db() as db:
+            db.executemany("INSERT OR IGNORE INTO delivery_parts VALUES(?,?,'prepared',?,NULL)",
+                           [(delivery_id,index,text) for index,text in enumerate(parts)])
+
+    def finish_part(self,delivery_id,index,state,message_id=None):
+        with self.db() as db:
+            db.execute('UPDATE delivery_parts SET state=?,message_id=? WHERE delivery_id=? AND part=?',
+                       (state,str(message_id) if message_id else None,delivery_id,index))
+
     def retire(self):
         with self.db() as db:
             db.execute("UPDATE deliveries SET state='cancelled',content='' WHERE state='prepared'")
             db.execute("UPDATE deliveries SET state='unknown' WHERE state='sending'")
+            db.execute("UPDATE delivery_parts SET state='cancelled',content='' WHERE state='prepared'")
+            db.execute("UPDATE delivery_parts SET state='unknown' WHERE state='sending'")
 
     def redact(self, scope):
         with self.db() as db:
             db.execute("UPDATE deliveries SET content='' WHERE scope=?", (scope,))
             db.execute("DELETE FROM decisions WHERE scope=?", (scope,))
+            db.execute("UPDATE delivery_parts SET content='' WHERE delivery_id IN (SELECT id FROM deliveries WHERE scope=?)",(scope,))

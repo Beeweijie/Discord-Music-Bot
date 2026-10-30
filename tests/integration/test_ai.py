@@ -303,12 +303,17 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await self.chat.round(self.scope, self.state, 1)
         self.state.send.assert_awaited_once()
 
-    async def test_judge_and_reply_share_identical_prefix_with_dynamic_tail(self):
+    async def test_thin_judge_and_full_reply_load_different_contexts(self):
         self.state.messages.clear(); self.state.messages.append(event())
         self.model.complete.side_effect = [{'action':'reply','reason':'useful','target_id':'100'}, 'hello']
         await self.chat.round(self.scope, self.state, 1)
         judge, reply = [call.args[1] for call in self.model.complete.await_args_list]
-        self.assertEqual(judge[:-1], reply[:-1])
+        self.assertEqual(len(judge),2)
+        self.assertIn('msgs',json.loads(judge[1]['content']))
+        self.assertIn('Identity JSON',reply[0]['content'])
+        self.assertNotIn('Identity JSON',judge[0]['content'])
+        self.assertEqual(self.model.complete.await_args_list[0].kwargs['max_tokens'],64)
+        self.assertEqual(self.model.complete.await_args_list[1].kwargs['max_tokens'],300)
         self.assertNotIn('seconds_since_bot', judge[0]['content'])
         self.assertNotIn('now', json.loads(judge[1]['content']))
         self.assertNotEqual(judge[-1], reply[-1])

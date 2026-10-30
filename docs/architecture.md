@@ -47,6 +47,9 @@ bot_app/
       settings.py prompts.py    participation policy and versioned instructions
       service.py                channel scheduling, decisions, generation, send guards
       participation.py          pure, deterministic timing policy for balanced/active conversation
+      thinking.py               conservative optional thinking effort/output routing
+      judgement.py              roughly 300-token thin participation pass and recall routing
+      delivery.py               optional semantic breaks without forced splitting
       reply.py                  bounded model-directed web tool loop
       storage.py                decision and delivery SQLite records
       discord.py                transport and /chat commands
@@ -63,6 +66,9 @@ bot_app/
       storage.py                channel evidence, maturity counters, reversible single-slot changes
       http.py web/              learned habits and revision administration
     vision/api.py               bounded Discord attachment validation and cached native image descriptions
+    surfing/
+      api.py policy.py          rare interest searches, optional sharing, activity and budget guards
+      storage.py                instance-wide daily limits and restart-safe source deduplication
   shared/
     identity.py                 immutable Discord scope/member/message identities
     revisions.py redaction.py   small shared primitives
@@ -172,11 +178,13 @@ blocks installation; rollback restores application code/environment and retains 
    4 seconds, ordinary contribution 8 seconds at the test profile's base interval. Busy channels
    get more space. Pending messages wait through this interval and are reconsidered once due,
    rather than being discarded. Balanced mode retains the configured fixed interval.
-5. Read lightweight scoped memory and ask the model for `reply / wait / skip`. Validate its
-   reason and target against the exact supplied transcript. A direct address selects reply
-   without a separate judge request.
+5. Read one small recent summary and build a thin persona/recent-message pass targeting roughly
+   300 input tokens. Short JSON (64 output-token ceiling) selects reply/wait/skip, a mapped local
+   message index and optional deep-recall/complexity hints. No full history, long-term ranking,
+   embedding or vision is loaded here. Direct address selects reply without a separate judge.
 6. Observe mode records decisions and creates memory candidates without generating/sending
-   a reply. Participate mode recalls full memory, then generates a short natural response.
+   a reply. Participate loads full persona/history and vision after a positive decision, and
+   retrieves relevant deep facts/events only when needed. Normal generation is capped at 300 tokens.
    With web search enabled, the reply model can choose `web_search` or `read_webpage` through
    function calling. Search/Fetch use the official DeepSeek endpoints and existing API key.
    The loop caps calls per reply and the shared monetary budget, permits only public read-only retrieval, validates
@@ -186,13 +194,15 @@ blocks installation; rollback restores application code/environment and retains 
 7. Recheck the channel sequence, chat/memory configuration revisions, memory invalidation
    epoch and live send permission. New messages, edits, deletion or forgetting cancel stale
    work. Empty, excessive and immediately duplicate replies are suppressed.
-8. Reserve a durable delivery ID before sending. Success records the returned Discord ID.
+8. Reserve a durable delivery ID and per-part states before sending. Optional semantic breaks
+   allow up to three short messages from one generation, separated by 0.6–1.2 seconds. New input
+   stops remaining parts; short answers are not forcibly split. Success records each Discord ID.
    An ambiguous failure becomes `unknown` and is never blindly resent. Restart retires
    incomplete deliveries. A successful bot message joins context without triggering itself.
 
 `wait` is reconsidered when new input arrives; it does not start a repeated model-call timer.
 Native image descriptions feed the same scoped text context. Its executable tools are bounded public search and page reading;
-it does not execute music commands, shell operations, autonomous scheduled messages or QQ/WeChat actions.
+it does not execute music commands, shell operations or QQ/WeChat actions.
 
 Image-only messages are admitted. Only bounded image attachments on the current Discord
 channel's CDN path are accepted, at most two per message. One native vision request yields
@@ -209,6 +219,18 @@ Mature stages require more sources/higher confidence. Early natural replies may 
 ask for persona feedback; stable personas stop these questions. No idle questioning scheduler
 exists. Deletion/forgetting invalidates derived notes and revision text; the dashboard can revert
 the latest available revision of each slot. Manual core changes isolate old growth notes.
+
+Optional interest surfing is separate from ordinary replies: local eligibility checks every minute,
+one-hour startup observation, twenty fresh messages, a 2–30 minute quiet/recent-activity window,
+two attempts and one share per instance/day, and six hours between attempts. One generic interest
+query feeds a selective optional-share decision. New input/config/permissions/day invalidates work;
+final delivery uses chat quotas, durable reservations and mention suppression. Source/title dedup
+survives restart. A shared ¥0.10 browsing pool inside the ¥1 budget protects normal conversation.
+
+Complex replies may enable bounded low/high thinking. Current tool-loop reasoning stays in memory
+and is passed back according to the provider protocol; it is never exposed as chat or stored in
+memory/persona/logs. completion_tokens includes reasoning; the ledger records the reasoning-token
+breakdown without double billing it. One fast fallback is allowed if reasoning exhausts its bound.
 
 ## Memory flow
 
@@ -244,9 +266,9 @@ Extraction and participation remain model decisions and require real-world quali
 
 ## DeepSeek caching and budgets
 
-Judge and reply share an identical stable system/persona/scope prefix and individually
-serialized historical messages. Time, retrieval results and task instructions are appended
-at the end. History grows by appending until the configured count/character ceiling, then
+The thin judge and full reply have separate stable prefixes. Replies keep individually
+serialized historical messages; time, retrieval results and task instructions are appended
+at the end. Reply history grows until the configured count/character ceiling, then
 rotates down to about 75% capacity to avoid discarding the oldest message on every input.
 
 This makes prefix reuse possible; it does not promise a hit rate. DeepSeek manages cache
@@ -284,6 +306,7 @@ shows estimated settled/reserved money; the provider's invoice remains authorita
 | Source/memory/evidence/jobs | `data/memory/memory.sqlite3` | WAL, schema metadata, per-channel scope |
 | Model/cache usage | `data/ai/usage.sqlite3` | additive accounting migration, durable reservations |
 | Persona growth | `data/ai/persona.sqlite3` | channel evidence, counters, source invalidation, reversible revisions |
+| Interest surfing | `data/ai/surfing.sqlite3` | instance-wide rare attempts/shares and public-source deduplication |
 | Runtime/tray IPC | `runtime/` | instance-bound atomic files |
 
 Chat and memory default to disabled; observe is the initial participation mode. Changes apply

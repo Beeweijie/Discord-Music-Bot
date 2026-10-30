@@ -96,6 +96,11 @@
             <label class="playlist-field">Core personality<textarea name="persona" rows="4" maxlength="6000" required></textarea><small>Learning adds small habits separately. It never rewrites this identity.</small></label>
             <label>Interests<input name="interests" maxlength="500"></label>
             <label class="inline-check"><input name="web_enabled" type="checkbox">Allow the bot to search the web when needed</label>
+            <label>Thinking mode<select name="thinking_mode"><option value="auto">Automatic for complex questions</option><option value="off">Fast replies only</option></select></label>
+            <label class="inline-check"><input name="reply_burst_enabled" type="checkbox">Allow natural short message bursts when they fit the conversation</label>
+            <p class="muted playlist-field">A small first pass decides whether to reply using brief identity and shallow context. Full persona, image understanding and relevant deep memory load only after that decision. Normal replies share a 300-token default limit, including up to three optional message parts. New conversation stops the remaining parts.</p>
+            <label class="inline-check"><input name="surf_enabled" type="checkbox">Occasionally browse for interests and share a discovery</label>
+            <p class="muted playlist-field">Interest browsing: at most 2 attempts and 1 shared message per day, at least 6 hours apart. Starts after an hour of observation and 20 new messages, during a quiet gap in a recently active channel. Uses up to ¥0.10 of the shared daily budget.</p>
             <label class="inline-check"><input name="vision_enabled" type="checkbox">Understand image attachments in allowed channels</label>
             <label class="inline-check"><input name="persona_learning_enabled" type="checkbox">Gradually develop habits from conversations and web research</label>
             <label>Names to respond to<input name="aliases" maxlength="800"><small>Separate names with commas.</small></label>

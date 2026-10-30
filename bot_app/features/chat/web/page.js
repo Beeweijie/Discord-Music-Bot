@@ -8,6 +8,8 @@
     ["hourly_limit", "Spontaneous replies per hour", "number"], ["daily_limit", "Extra reply-count limit per 24 hours (0: budget only)", "number"],
     ["daily_model_calls", "Extra model-call limit per day (0: budget only)", "number"], ["context_messages", "Recent messages to consider", "number"],
     ["context_chars", "Maximum context characters", "number"], ["max_reply_chars", "Maximum reply characters", "number"],
+    ["reply_max_tokens", "Normal reply token limit (all message parts combined)", "number"],
+    ["decision_persona", "Brief persona for reply decisions (optional)", "text"],
     ["quiet_hours", "Quiet hours (HH:MM-HH:MM)", "text"], ["timezone", "Time zone", "text"],
     ["excluded_users", "Excluded member IDs (comma separated)", "text"],
     ["web_max_calls", "Web requests per reply", "number"], ["web_daily_calls", "Extra web-call limit per day (0: budget only)", "number"]
@@ -70,7 +72,8 @@
       const health = await api("/ai/status" + query()); if (current !== generation) return;
       const labels = {ready:"Ready", missing_api_key:"API key required", not_running:"Not running", unavailable:"Unavailable; check Logs"};
       const webLabels = {ready:"Ready", not_used:"Not used yet", unavailable:"Recent lookup failed"};
-      document.getElementById("chat-health").textContent = `Model: ${labels[health.state] || health.state}. Web search: ${config.web_enabled ? (webLabels[health.web_search] || "Ready when needed") : "Off"}. ${health.chat_error ? "Recent request failed; check Logs." : "No recent chat errors."}`;
+      const surfLabels = {waiting:"Waiting for a suitable gap",shared:"Shared a discovery",preserving_budget:"Preserving chat budget",unavailable:"Recent browsing attempt stopped"};
+      document.getElementById("chat-health").textContent = `Model: ${labels[health.state] || health.state}. Web search: ${config.web_enabled ? (webLabels[health.web_search] || "Ready when needed") : "Off"}. Interest browsing: ${config.surf_enabled ? (surfLabels[health.surfing] || "Waiting") : "Off"}. ${health.chat_error ? "Recent request failed; check Logs." : "No recent chat errors."}`;
       const budget = health.budget;
       document.getElementById("chat-budget").textContent = budget ? `¥${budget.spent_cny.toFixed(4)} used of ¥${budget.limit_cny.toFixed(2)} · ¥${budget.reserved_cny.toFixed(4)} reserved · resets at midnight ${budget.timezone} (${budget.day})` : "Budget available when the bot is running.";
       if (window.loadPersona) await window.loadPersona(guild, guilds.find(item => item.id === guild).channels, config.channels);
@@ -79,7 +82,7 @@
         const hit = row.cache_hit_tokens || 0, miss = row.cache_miss_tokens || 0;
         const rate = hit + miss ? (100 * hit / (hit + miss)).toFixed(1) + "%" : "—";
         const cache = row.cache_reported ? `cache hit ${rate} (${hit} hit / ${miss} uncached input tokens; ${row.cache_reported}/${row.requests} requests reported)` : "cache usage not reported";
-        const line = document.createElement("p"); line.textContent = `${row.day} · ${row.model || ""} · ${row.stage} · ${row.requests} requests · ${row.input_tokens || 0} input / ${row.output_tokens || 0} output tokens · ${cache} · ${row.status}`; usage.append(line);
+        const line = document.createElement("p"); line.textContent = `${row.day} · ${row.model || ""} · ${row.stage} · ${row.requests} requests · ${row.input_tokens || 0} input / ${row.output_tokens || 0} output tokens (${row.reasoning_tokens || 0} thinking tokens included) · ${cache} · ${row.status}`; usage.append(line);
       }
       if (!usage.childElementCount) usage.textContent = "No model requests recorded.";
       await decisions();

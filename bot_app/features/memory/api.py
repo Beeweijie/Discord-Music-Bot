@@ -92,6 +92,19 @@ class MemoryService:
                 and all(self.author_allowed(scope, source['author']) for source in row['sources'])]
         return [{key: row[key] for key in ('id', 'subject', 'kind', 'content', 'created', 'valid_until', 'attribution')} for row in rows]
 
+    async def shallow(self,scope):
+        """One recent summary; no embeddings, long-term ranking or extra model request."""
+        if not self.config(scope)['enabled'] or not self.allowed_scope(scope) or not self.has_store:
+            return []
+        rows=await self.call('shallow',scope)
+        return [{'kind':'summary','content':row['content'][:240],'created':row['created']} for row in rows
+                if all(self.author_allowed(scope,source['author']) for source in row['sources'])]
+
+    async def deep(self,scope,query,subject=None):
+        """Relevant facts and episodes only, loaded after the decision to reply."""
+        rows=await self.recall(scope,query,subject)
+        return [row for row in rows if row['kind']!='summary']
+
     async def epoch(self, scope):
         return await self.call('epoch', scope)
 
