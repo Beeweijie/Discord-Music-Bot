@@ -53,6 +53,8 @@ def judge_messages(state,cfg,shallow,plan):
     first_line=(cfg['persona'].splitlines() or [''])[0]
     identity={'name':cfg['name'][:25],'persona':(cfg.get('decision_persona') or first_line)[:35],
               'interests':cfg['interests'][:30]}
+    if cfg.get('expression_style')=='banter':
+        identity['style']='banter'
     instruction=ACTIVE_RULES if active else RULES
     system={'role':'system','content':instruction+json.dumps(identity,ensure_ascii=False,separators=(',',':'))}
     context={'followup':plan.followup,'brief':' '.join(row['content'] for row in shallow)[:65],'msgs':rows}

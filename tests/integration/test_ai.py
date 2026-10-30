@@ -231,6 +231,19 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([json.loads(row['content']) for row in prefix[1:]],original)
         self.assertEqual([row.context() for row in self.state.messages],original)
 
+    def test_expression_profiles_keep_core_and_history_but_have_distinct_cached_prefixes(self):
+        self.cfg['persona']='你是deepseek，也是蓝色大肥鱼\n你现在是一个喜欢在网上冲浪的群友，你爱怎么说话就怎么说话'
+        original=self.cfg['persona']
+        natural=self.chat.model_prefix(self.scope,self.state,self.cfg)
+        self.cfg['expression_style']='banter'
+        banter=self.chat.model_prefix(self.scope,self.state,self.cfg)
+        self.assertNotEqual(natural[0],banter[0])
+        self.assertEqual(natural[1:],banter[1:])
+        identity=json.loads(banter[0]['content'].split('\nIdentity JSON:\n',1)[1])
+        self.assertEqual(identity['persona'],original)
+        self.assertEqual(identity['expression_style'],'banter')
+        self.assertEqual(banter,self.chat.model_prefix(self.scope,self.state,self.cfg))
+
     async def test_observe_mode_calls_judge_but_never_sends(self):
         self.cfg['mode'] = 'observe'
         self.state.messages.clear(); self.state.messages.append(event())

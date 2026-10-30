@@ -91,10 +91,17 @@ class ParticipationTests(unittest.TestCase):
 
     def test_policy_configuration_is_validated(self):
         validate(self.cfg)
-        for key,value in [('web_max_calls',0),('web_enabled','true'),('participation_style','unbounded')]:
+        for key,value in [('web_max_calls',0),('web_enabled','true'),('participation_style','unbounded'),('expression_style','unbounded')]:
             invalid=dict(self.cfg,**{key:value})
             with self.assertRaises(ValueError):
                 validate(invalid)
+
+    def test_expression_style_is_optional_and_supports_a_channel_override(self):
+        from bot_app.features.chat.settings import for_channel
+        cfg=validate(dict(self.cfg,expression_style='banter',channel_overrides={'2':{'expression_style':'natural'}}))
+        self.assertEqual(cfg['expression_style'],'banter')
+        self.assertEqual(for_channel(cfg,'2')['expression_style'],'natural')
+        self.assertEqual(for_channel(cfg,'3')['expression_style'],'banter')
 
 
 class WebServiceTests(unittest.IsolatedAsyncioTestCase):

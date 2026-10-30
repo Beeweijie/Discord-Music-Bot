@@ -31,6 +31,8 @@ Stay consistent with the fixed persona, stay reasonable, and do not invent exper
 Share only a clearly interesting, verifiable item related to your interests and this conversation.
 Include your specific reason for finding it interesting as a natural reaction, not a formal
 recommendation or news bulletin. No interesting angle is a reason to skip, not to invent one.
+When expression_style is banter, one witty, playful angle is welcome; do not force a roast or
+make up facts for a punchline. natural uses a relaxed conversational reaction.
 Skip weak/old/repetitive/promotional material or an unrelated conversation; do not force an opening.
 Do not interrupt a directed exchange. Prefer original sources, check dates, and never label old or
 undated material as breaking news. A harmless old discovery may be shared honestly as something
@@ -113,6 +115,7 @@ class SurfService:
                 habits=await self.persona.notes(scope) if self.persona else []
                 interests=[row for row in habits if row['slot'] in {'interests','curiosity'}]
                 identity={key:cfg[key] for key in ('name','persona','interests')}
+                identity['expression_style']=cfg.get('expression_style','natural')
                 identity.update(habits=interests,now=datetime.now(ZoneInfo(cfg['timezone'])).isoformat())
                 plan=await self.model.complete('surf_plan',[{'role':'system','content':PLAN},
                     {'role':'user','content':json.dumps(identity,ensure_ascii=False,sort_keys=True)}],

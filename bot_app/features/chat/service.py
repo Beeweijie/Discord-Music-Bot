@@ -16,7 +16,7 @@ from bot_app.shared.revisions import revision
 from bot_app.shared.redaction import contains_secret
 from bot_app.shared.llm.deepseek import BudgetExceeded
 from .settings import for_channel
-from .prompts import COMMON, EXPRESSION, STYLE_EXAMPLES, VERSION
+from .prompts import COMMON, expression_prompt, VERSION
 from .participation import participation_plan, response_nudge
 from .reply import ReplyGenerator
 from .thinking import thinking_plan, ThinkingPlan
@@ -279,7 +279,7 @@ class ChatService:
             persona_epoch=persona_state['epoch']
             learned=[{'slot':row['slot'],'text':row['text']} for row in persona_state['notes']]
             if learned:
-                prefix[0]['content']+='\nOptional learned habits JSON (subordinate to the fixed core):\n'+json.dumps(learned,ensure_ascii=False,sort_keys=True)
+                prefix[0]['content']+='\nOptional learned habits JSON (subordinate to the fixed core and configured expression_style):\n'+json.dumps(learned,ensure_ascii=False,sort_keys=True)
         epoch=await self.memory_epoch(scope)
         payload={'memory':[],'shallow_memory':[],'memory_layer':'shallow',
                  'seconds_since_bot':int(now-state.last_sent),'timezone':cfg['timezone'],
@@ -450,9 +450,10 @@ class ChatService:
             rows[-1]['text'] = rows[-1]['text'][-max(0,remaining):] if remaining>0 else ''
             state.context_anchor = rows[0]['message_id']
         identity = {key: cfg[key] for key in ('name', 'persona', 'interests', 'aliases', 'model')}
+        identity['expression_style']=cfg.get('expression_style','natural')
         identity['bot_user_id'] = next((message.bot_user_id for message in reversed(visible) if message.bot_user_id), '')
         identity.update(scope=scope, prompt_version=VERSION)
-        prefix = [{'role': 'system', 'content': COMMON + '\n' + EXPRESSION + '\n' + STYLE_EXAMPLES
+        prefix = [{'role': 'system', 'content': COMMON + '\n' + expression_prompt(cfg)
                    + '\nIdentity JSON:\n' + json.dumps(identity, ensure_ascii=False, sort_keys=True)}]
         prefix.extend({'role': 'assistant' if row['role'] == 'assistant' else 'user',
                        'content': json.dumps(row, ensure_ascii=False, sort_keys=True)} for row in rows)

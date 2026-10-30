@@ -29,10 +29,16 @@ is skipped; new conversation cancels a pending share. Its ¥0.10 sub-budget is p
 ¥1 daily budget. Previously shared sources are deduplicated across restarts.
 
 Ordinary participation decisions use a thin persona, tiny recent transcript and shallow summary,
-targeting roughly 300 input tokens with at most 64 output tokens. Only a positive decision loads
+targeting roughly 300 input tokens in Balanced mode and at most 600 in Active mode, with 64 output
+tokens (one malformed-decision repair may use 96). Only a positive decision loads
 full persona/history, image understanding and relevant deep facts/events. Normal replies default
 to 300 output tokens. Optional natural message breaks create at most three short posts from that
 one generation; new input stops unsent parts. One short answer remains one message.
+
+Set `expression_style` in the server's `chat.json` or settings API to `natural` (relaxed, default)
+or `banter` (witty irony and medium-strength mutual teasing). A channel override may select another
+style. The style guides replies, discovery shares and persona learning while preserving the
+owner's core persona. Banter responds seriously to sincere requests and stops teasing when asked.
 
 **Automatic thinking** enables bounded low/high reasoning only for complex questions or explicit
 requests. Everyday chat and background jobs stay fast. Reasoning tokens are included in output

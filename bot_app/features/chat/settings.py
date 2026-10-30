@@ -14,6 +14,7 @@ DEFAULTS = {
     "surf_enabled": False, "thinking_mode": "auto",
     "reply_max_tokens": 300, "decision_persona": "",
     "reply_burst_enabled": True,
+    "expression_style": "natural",
 }
 EFFECTS = {key: "next_message" for key in DEFAULTS}
 
@@ -26,6 +27,8 @@ def validate(value):
     if (any(type(value[key]) is not bool for key in ('web_enabled','vision_enabled','persona_learning_enabled','surf_enabled','reply_burst_enabled'))
             or value['participation_style'] not in {'balanced','active'} or value['thinking_mode'] not in {'off','auto'}):
         raise ValueError('Invalid web search switch or participation style.')
+    if value.get('expression_style','natural') not in {'natural','banter'}:
+        raise ValueError('Invalid expression style.')
     bounds = {"debounce_seconds": (0, 60), "max_wait_seconds": (1, 120), "cooldown_seconds": (0, 3600),
               "hourly_limit": (1, 100), "daily_limit": (0, 10000), "daily_model_calls": (0, 10000),
               "context_messages": (5, 100), "context_chars": (2000, 40000), "max_reply_chars": (50, 1500),
@@ -48,7 +51,7 @@ def validate(value):
         raise ValueError("Aliases must contain up to 20 short names.")
     if not isinstance(value["channel_overrides"], dict) or len(value["channel_overrides"]) > 200:
         raise ValueError("Invalid channel overrides.")
-    allowed = {"mode", "persona", "interests", "cooldown_seconds", "hourly_limit", "daily_limit",'participation_style','web_enabled'}
+    allowed = {"mode", "persona", "interests", "cooldown_seconds", "hourly_limit", "daily_limit",'participation_style','web_enabled','expression_style'}
     for channel, overrides in value["channel_overrides"].items():
         snowflake(channel)
         if not isinstance(overrides, dict) or not set(overrides) <= allowed:
