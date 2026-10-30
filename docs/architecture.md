@@ -46,6 +46,8 @@ bot_app/
     chat/
       settings.py prompts.py    participation policy and versioned instructions
       service.py                channel scheduling, decisions, generation, send guards
+      participation.py          pure, deterministic timing policy for balanced/active conversation
+      reply.py                  bounded model-directed web tool loop
       storage.py                decision and delivery SQLite records
       discord.py                transport and /chat commands
       http.py web/              group chat administration
@@ -55,6 +57,7 @@ bot_app/
       storage.py                source/evidence/job/history/vector SQLite storage
       discord.py                /memory member commands
       http.py web/              inspection, approval, correction, forgetting, export
+    web_search/api.py           public read-only DeepSeek Search/Fetch, URL/query validation, scoped cache
   shared/
     identity.py                 immutable Discord scope/member/message identities
     revisions.py redaction.py   small shared primitives
@@ -159,11 +162,21 @@ blocks installation; rollback restores application code/environment and retains 
    channel has one pending worker. Debounce combines bursts; maximum wait prevents starvation.
 4. Apply quiet hours, autonomous cooldown and hourly/rolling-24-hour send quotas. Direct
    address bypasses autonomous timing, but has a per-member limit and the shared model budget.
+   Active mode uses `participation_plan()` to adapt the interval: follow-up 2 seconds, question
+   4 seconds, ordinary contribution 8 seconds at the test profile's base interval. Busy channels
+   get more space. Pending messages wait through this interval and are reconsidered once due,
+   rather than being discarded. Balanced mode retains the configured fixed interval.
 5. Read lightweight scoped memory and ask the model for `reply / wait / skip`. Validate its
    reason and target against the exact supplied transcript. A direct address selects reply
    without a separate judge request.
 6. Observe mode records decisions and creates memory candidates without generating/sending
    a reply. Participate mode recalls full memory, then generates a short natural response.
+   With web search enabled, the reply model can choose `web_search` or `read_webpage` through
+   function calling. Search/Fetch use the official DeepSeek endpoints and existing API key.
+   The loop caps calls per reply and UTC day, permits only public read-only retrieval, validates
+   URLs/queries, and treats retrieved pages as untrusted evidence. Page reading is limited to
+   URLs supplied in the current message or returned by search. Successful facts cite sources;
+   failures are returned to the model without fabricated evidence. Stale work stops between calls.
 7. Recheck the channel sequence, chat/memory configuration revisions, memory invalidation
    epoch and live send permission. New messages, edits, deletion or forgetting cancel stale
    work. Empty, excessive and immediately duplicate replies are suppressed.
@@ -172,8 +185,8 @@ blocks installation; rollback restores application code/environment and retains 
    incomplete deliveries. A successful bot message joins context without triggering itself.
 
 `wait` is reconsidered when new input arrives; it does not start a repeated model-call timer.
-This initial implementation is text-only. AI conversation does not execute music commands,
-tools, autonomous scheduled messages or cross-platform QQ/WeChat actions.
+This implementation is text-only. Its tools are bounded public search and page reading;
+it does not execute music commands, shell operations, autonomous scheduled messages or QQ/WeChat actions.
 
 ## Memory flow
 

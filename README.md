@@ -14,11 +14,18 @@ Manage Server members can also use `/chat observe`, `/chat on`, `/chat off` and 
 Memory has a separate opt-in switch on the **Memory** page. It stores scoped facts, events,
 summaries and evidence in local SQLite, supports review/correction/forgetting, and works with
 keyword recall without an embedding service. `/memory` manages your own channel profile.
-Both features start disabled. Chat does not execute music controls or tools.
+Both features start disabled. Chat does not execute music controls or arbitrary commands.
+Read-only web search can be enabled separately with **Allow the bot to search the web when needed**.
+The model then chooses whether to call DeepSeek's official Search/Fetch APIs using the same API key,
+and cites retrieved sources. Casual chat does not require a lookup. Tool calls have per-reply/day caps.
+Choose **Active** participation for quicker, unmentioned follow-ups and more spontaneous replies.
+Its timing policy adapts to questions, ongoing exchanges and channel activity; it never needs an @
+to consider joining the discussion. Commands and mentions addressed to other bots remain protected.
 
 Prompts keep stable history before changing time/retrieval/task data to support DeepSeek's
 prefix cache. The dashboard displays actual cache hit/miss input tokens and output tokens;
-cache availability and hit rate depend on the provider. See the complete
+cache availability and hit rate depend on the provider. Reply tool definitions also stay stable;
+actual cache hit metrics remain authoritative. See the complete
 [AI setup, lifecycle and rollout guide](docs/ai-chat-memory.md).
 
 ## Miao-chan voice music requests (optional)

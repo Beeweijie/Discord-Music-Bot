@@ -14,7 +14,9 @@ from zoneinfo import ZoneInfo
 from bot_app.shared.revisions import revision
 from bot_app.shared.redaction import contains_secret
 from .settings import for_channel
-from .prompts import COMMON, JUDGE, REPLY, VERSION
+from .prompts import COMMON, JUDGE, JUDGE_ACTIVE, VERSION
+from .participation import participation_plan
+from .reply import ReplyGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +36,12 @@ class ChannelState:
     context_anchor: str = ''
 
 class ChatService:
-    def __init__(self, repository, model, memory, settings_for):
+    def __init__(self, repository, model, memory, settings_for, web=None):
         self.repository = repository
         self.model = model
         self.memory = memory
         self.settings_for = settings_for
+        self.replies = ReplyGenerator(model,web)
         self.channels = {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='chat-db')
         self.closing = False
@@ -116,8 +119,10 @@ class ChatService:
         try:
             while not self.closing and state.processed < state.sequence and self.allowed(scope):
                 cfg = self.config(scope)
-                direct = state.messages[-1].direct
-                due = min(state.first_pending + cfg['max_wait_seconds'], state.last_pending + (0.5 if direct else cfg['debounce_seconds']))
+                plan=participation_plan(state,cfg,time.monotonic())
+                due = min(state.first_pending + cfg['max_wait_seconds'], state.last_pending + plan.delay)
+                if cfg['participation_style']=='active' and not state.messages[-1].direct:
+                    due=max(due,state.last_sent+plan.interval)
                 delay = max(0, due - time.monotonic())
                 state.wake.clear()
                 if delay:
@@ -151,6 +156,7 @@ class ChatService:
         current = state.messages[-1]
         direct = current.direct
         now = time.monotonic()
+        plan=participation_plan(state,cfg,now)
         if not direct and current.mention_only:
             await self.call('record', scope, 'skip', 'addressed_to_other')
             return
@@ -161,11 +167,11 @@ class ChatService:
             rate = self.user_rates.setdefault(key, deque(maxlen=10))
             while rate and rate[0] < now - 30:
                 rate.popleft()
-            if len(rate) >= 3:
+            if len(rate) >= (8 if cfg['participation_style']=='active' else 3):
                 await self.call('record', scope, 'skip', 'member_rate_limit')
                 return
             rate.append(now)
-        elif self.quiet(cfg) or now - state.last_sent < cfg['cooldown_seconds']:
+        elif self.quiet(cfg) or now - state.last_sent < plan.interval:
             await self.call('record', scope, 'skip', 'quiet_or_cooldown')
             return
         elif not await self.call('allowed', scope, cfg['hourly_limit'], cfg['daily_limit']):
@@ -181,11 +187,14 @@ class ChatService:
         except Exception:
             logger.warning('Memory recall unavailable')
         payload = {"memory": memories, "seconds_since_bot": int(now-state.last_sent),
-                   "timezone": cfg['timezone'], "now": datetime.now(ZoneInfo(cfg['timezone'])).isoformat()}
+                   "timezone": cfg['timezone'], "now": datetime.now(ZoneInfo(cfg['timezone'])).isoformat(),
+                   'max_reply_characters':cfg['max_reply_chars'],
+                   'participation':{'style':cfg['participation_style'],'followup':plan.followup,'recent_messages':plan.activity}}
         if direct:
             decision = {"action": "reply", "reason": "addressed", "target_id": current.message_id}
         else:
-            decision = await self.model.complete('chat_judge', prefix + [self.model_task(JUDGE, payload)], scope=scope,
+            instruction=JUDGE_ACTIVE if cfg['participation_style']=='active' else JUDGE
+            decision = await self.model.complete('chat_judge', prefix + [self.model_task(instruction, payload)], scope=scope,
                 model=cfg['model'], json_mode=True, max_tokens=160, daily_limit=cfg['daily_model_calls'])
         action, reason = decision.get('action'), decision.get('reason')
         valid_reasons = {'addressed', 'followup', 'useful', 'interrupting', 'repetitive', 'unrelated', 'wait'}
@@ -212,17 +221,27 @@ class ChatService:
                 payload['memory'] = await self.memory.recall(scope, current.content, current.author_id)
         except Exception:
             pass
-        response = await self.model.complete('chat_reply', prefix + [self.model_task(REPLY, payload)], scope=scope,
-            model=cfg['model'], max_tokens=500, daily_limit=cfg['daily_model_calls'])
-        response = response.strip()
-        if not response or len(response) > cfg['max_reply_chars'] or len(response.encode('utf-16-le')) > 3800:
-            await self.call('record', scope, 'cancelled', 'empty_or_overlong_reply')
-            return
         async def still_current():
             latest_epoch = await self.memory_epoch(scope)
             return (state.sequence == snapshot and latest_epoch == epoch and self.allowed(scope)
                     and revision(self.config(scope)) == cfg_revision
                     and revision(self.memory.config(scope)) == memory_revision and await state.can_send())
+        async def record_tool(name,status):
+            await self.call('record',scope,'tool',name,{'status':status})
+        try:
+            async with asyncio.timeout(45):
+                response=await self.replies.generate(prefix,self.model_task,payload,cfg,scope=scope,current=current,
+                    still_current=still_current,record_tool=record_tool)
+        except TimeoutError:
+            await self.call('record',scope,'cancelled','reply_timeout')
+            return
+        if response is None:
+            await self.call('record',scope,'cancelled','context_changed_during_tools')
+            return
+        response = response.strip()
+        if not response or len(response) > cfg['max_reply_chars'] or len(response.encode('utf-16-le')) > 3800:
+            await self.call('record', scope, 'cancelled', 'empty_or_overlong_reply')
+            return
         if not await still_current():
             await self.call('record', scope, 'cancelled', 'context_or_permissions_changed')
             return

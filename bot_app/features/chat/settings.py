@@ -9,6 +9,7 @@ DEFAULTS = {
     "hourly_limit": 10, "daily_limit": 60, "daily_model_calls": 300,
     "context_messages": 50, "context_chars": 16000, "max_reply_chars": 600,
     "quiet_hours": "", "timezone": "Australia/Sydney", "excluded_users": [],
+    "participation_style": "balanced", "web_enabled": False, "web_max_calls": 3, "web_daily_calls": 60,
 }
 EFFECTS = {key: "next_message" for key in DEFAULTS}
 
@@ -18,9 +19,12 @@ def validate(value):
     result = dict(value)
     if type(value["enabled"]) is not bool or value["mode"] not in {"observe", "participate"}:
         raise ValueError("Invalid chat switch or mode.")
+    if type(value['web_enabled']) is not bool or value['participation_style'] not in {'balanced','active'}:
+        raise ValueError('Invalid web search switch or participation style.')
     bounds = {"debounce_seconds": (0, 60), "max_wait_seconds": (1, 120), "cooldown_seconds": (0, 3600),
               "hourly_limit": (1, 100), "daily_limit": (1, 1000), "daily_model_calls": (1, 5000),
-              "context_messages": (5, 100), "context_chars": (2000, 40000), "max_reply_chars": (50, 1500)}
+              "context_messages": (5, 100), "context_chars": (2000, 40000), "max_reply_chars": (50, 1500),
+              'web_max_calls':(1,5), 'web_daily_calls':(1,1000)}
     for key, (lo, hi) in bounds.items():
         if type(value[key]) is not int or not lo <= value[key] <= hi:
             raise ValueError(f"{key} must be between {lo} and {hi}.")
@@ -39,7 +43,7 @@ def validate(value):
         raise ValueError("Aliases must contain up to 20 short names.")
     if not isinstance(value["channel_overrides"], dict) or len(value["channel_overrides"]) > 200:
         raise ValueError("Invalid channel overrides.")
-    allowed = {"mode", "persona", "interests", "cooldown_seconds", "hourly_limit", "daily_limit"}
+    allowed = {"mode", "persona", "interests", "cooldown_seconds", "hourly_limit", "daily_limit",'participation_style','web_enabled'}
     for channel, overrides in value["channel_overrides"].items():
         snowflake(channel)
         if not isinstance(overrides, dict) or not set(overrides) <= allowed:

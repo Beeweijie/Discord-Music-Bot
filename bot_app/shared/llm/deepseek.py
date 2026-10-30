@@ -15,6 +15,16 @@ import aiohttp
 class ModelUnavailable(RuntimeError):
     pass
 
+
+async def bounded_json(response):
+    """read(n) may return only the first network chunk, including half a UTF-8 character."""
+    raw=bytearray()
+    async for chunk in response.content.iter_chunked(65536):
+        raw.extend(chunk)
+        if len(raw)>1_048_576:
+            raise ModelUnavailable('API response exceeded the size limit.')
+    return json.loads(raw)
+
 class DeepSeekClient:
     def __init__(self, data_dir, *, key=None, base_url=None):
         self.key = key if key is not None else os.getenv("DEEPSEEK_API_KEY", "")
@@ -71,7 +81,8 @@ class DeepSeekClient:
             db.execute("UPDATE usage SET status=?,input_tokens=?,output_tokens=?,cache_hit_tokens=?,cache_miss_tokens=?,cache_reported=? WHERE id=?",
                        (status, total, tokens('completion_tokens'), hit if reported else 0, miss if reported else 0, int(reported), request_id))
 
-    async def complete(self, stage, messages, *, scope, model="deepseek-flash", json_mode=False, max_tokens=500, daily_limit=300):
+    async def complete(self, stage, messages, *, scope, model="deepseek-flash", json_mode=False, max_tokens=500, daily_limit=300,
+                       tools=None, tool_choice='auto'):
         if not self.configured:
             raise ModelUnavailable("Set DEEPSEEK_API_KEY in the local .env file.")
         if time.monotonic() < self.retry_at:
@@ -87,16 +98,37 @@ class DeepSeekClient:
                         "stream": False, "thinking": {"type": "disabled"}}
                 if json_mode:
                     body["response_format"] = {"type": "json_object"}
+                if tools is not None:
+                    body.update(tools=tools,tool_choice=tool_choice)
                 async with self.session.post(self.base_url + "/chat/completions", json=body,
                                              headers={"Authorization": "Bearer " + self.key}) as response:
                     if response.status != 200:
                         raise ModelUnavailable(f"Model request failed (HTTP {response.status}).")
-                    raw = await response.content.read(1_048_577)
-                    if len(raw) > 1_048_576:
-                        raise ModelUnavailable("Model response exceeded the size limit.")
-                    result = json.loads(raw)
+                    result = await bounded_json(response)
                 usage = result.get("usage", {})
-                content = result["choices"][0]["message"]["content"]
+                message = result['choices'][0]['message']
+                content = message.get('content')
+                if tools is not None:
+                    calls = message.get('tool_calls') or []
+                    if not isinstance(calls,list) or len(calls)>5:
+                        raise ModelUnavailable('Invalid model tool calls.')
+                    cleaned=[]
+                    for call in calls:
+                        if not isinstance(call,dict) or not isinstance(call.get('function'),dict):
+                            raise ModelUnavailable('Invalid model tool call schema.')
+                        function=call.get('function',{})
+                        if (call.get('type')!='function' or not isinstance(call.get('id'),str)
+                                or not 1<=len(call['id'])<=200 or not isinstance(function.get('name'),str)
+                                or not isinstance(function.get('arguments'),str) or len(function['arguments'])>8192):
+                            raise ModelUnavailable('Invalid model tool call schema.')
+                        cleaned.append({'id':call['id'],'type':'function','function':{'name':function['name'],'arguments':function['arguments']}})
+                    if not cleaned and (not isinstance(content,str) or not content.strip()):
+                        raise ModelUnavailable('Model returned no answer or tool call.')
+                    if content is not None and not isinstance(content,str):
+                        raise ModelUnavailable('Invalid model message content.')
+                    status='completed'
+                    self.failures=0
+                    return {'role':'assistant','content':content,'tool_calls':cleaned}
                 if not isinstance(content, str) or not content.strip():
                     raise ModelUnavailable("Model returned empty content.")
                 output = json.loads(content) if json_mode else content.strip()
@@ -118,6 +150,35 @@ class DeepSeekClient:
             finally:
                 await asyncio.shield(asyncio.to_thread(self._finish, request_id, status, usage))
 
+    async def web_request(self, kind, arguments, *, scope, daily_limit=60):
+        """DeepSeek's official read-only Search/Fetch APIs; no direct target-site requests."""
+        if kind not in {'search','fetch'} or not self.configured:
+            raise ModelUnavailable('Web search is not configured.')
+        async with self.slots:
+            async with self.accounting:
+                request_id=await asyncio.to_thread(self._reserve,scope,'web_'+kind,'deepseek-'+kind,daily_limit)
+            status='unknown'
+            try:
+                if self.session is None or self.session.closed:
+                    self.session=aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
+                base=self.base_url.removesuffix('/v1')
+                async with self.session.post(base+'/v1/tools/'+kind,json=arguments,
+                        headers={'Authorization':'Bearer '+self.key},timeout=aiohttp.ClientTimeout(total=15)) as response:
+                    if response.status!=200:
+                        raise ModelUnavailable(f'Web request failed (HTTP {response.status}).')
+                    result=await bounded_json(response)
+                if not isinstance(result,dict):
+                    raise ModelUnavailable('Invalid web response.')
+                status='completed'
+                return result
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                status='failed'
+                raise ModelUnavailable('Web retrieval unavailable; no evidence was obtained.') from error
+            finally:
+                await asyncio.shield(asyncio.to_thread(self._finish,request_id,status,{}))
+
     async def embed(self, text, *, scope='embedding'):
         base = os.getenv("EMBEDDING_BASE_URL", "").rstrip("/")
         model = os.getenv("EMBEDDING_MODEL", "")
@@ -135,10 +196,7 @@ class DeepSeekClient:
             async with self.slots, self.session.post(base + "/embeddings", json={"model": model, "input": text[:8000]}, headers=headers) as response:
                 if response.status != 200:
                     raise ModelUnavailable(f"Embedding request failed (HTTP {response.status}).")
-                raw = await response.content.read(1_048_577)
-                if len(raw) > 1_048_576:
-                    raise ModelUnavailable("Embedding response too large.")
-                result = json.loads(raw)
+                result = await bounded_json(response)
                 vector = result["data"][0]["embedding"]
                 usage = result.get('usage',{})
             if not isinstance(vector, list) or not 1 <= len(vector) <= 8192 or any(type(x) not in {int, float} or not math.isfinite(x) for x in vector):

@@ -91,9 +91,11 @@
           <label class="inline-check"><input name="enabled" type="checkbox">Enable group chat for this server</label>
           <div class="form-grid">
             <label>Default participation<select name="mode"><option value="observe">Observe — judge without sending</option><option value="participate">Participate — send replies</option></select></label>
+            <label>Participation style<select name="participation_style"><option value="balanced">Balanced</option><option value="active">Active — faster follow-ups and more spontaneous replies</option></select></label>
             <label>Bot name<input name="name" maxlength="100" required></label>
             <label class="playlist-field">Personality<textarea name="persona" rows="4" maxlength="6000" required></textarea></label>
             <label>Interests<input name="interests" maxlength="500"></label>
+            <label class="inline-check"><input name="web_enabled" type="checkbox">Allow the bot to search the web when needed</label>
             <label>Names to respond to<input name="aliases" maxlength="800"><small>Separate names with commas.</small></label>
           </div>
           <fieldset><legend>Allowed channels</legend><div id="chat-channels" class="channel-options">Loading channels...</div></fieldset>

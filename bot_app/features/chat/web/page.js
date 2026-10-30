@@ -4,12 +4,13 @@
   const form = document.getElementById("chat-form");
   const advanced = [
     ["model", "DeepSeek model", "text"], ["debounce_seconds", "Combine messages for (seconds)", "number"],
-    ["max_wait_seconds", "Maximum wait (seconds)", "number"], ["cooldown_seconds", "Time between spontaneous replies (seconds)", "number"],
+    ["max_wait_seconds", "Maximum message-combining wait (seconds)", "number"], ["cooldown_seconds", "Base reply interval (Active adapts up to 8 seconds, longer in busy channels)", "number"],
     ["hourly_limit", "Spontaneous replies per hour", "number"], ["daily_limit", "Spontaneous replies per 24 hours", "number"],
     ["daily_model_calls", "Model calls per day", "number"], ["context_messages", "Recent messages to consider", "number"],
     ["context_chars", "Maximum context characters", "number"], ["max_reply_chars", "Maximum reply characters", "number"],
     ["quiet_hours", "Quiet hours (HH:MM-HH:MM)", "text"], ["timezone", "Time zone", "text"],
-    ["excluded_users", "Excluded member IDs (comma separated)", "text"]
+    ["excluded_users", "Excluded member IDs (comma separated)", "text"],
+    ["web_max_calls", "Web requests per reply", "number"], ["web_daily_calls", "Web requests per channel per day", "number"]
   ];
   for (const [name, title, type] of advanced) {
     const label = document.createElement("label"); label.textContent = title;
@@ -28,7 +29,9 @@
     if (!result.decisions.length) {root.textContent = "No decisions yet. Enable Observe mode and allow a test channel to start."; return;}
     for (const row of result.decisions) {
       const item = document.createElement("p"); item.className = "decision-row";
-      item.textContent = `${new Date(row.created * 1000).toLocaleString()} · ${row.scope.split(":").at(-1)} · ${row.action} · ${row.reason}`;
+      let outcome = "";
+      try {const detail = JSON.parse(row.detail || "{}"); if (row.action === "tool" && detail.status) outcome = " · " + detail.status;} catch {}
+      item.textContent = `${new Date(row.created * 1000).toLocaleString()} · ${row.scope.split(":").at(-1)} · ${row.action} · ${row.reason}${outcome}`;
       root.append(item);
     }
   }
@@ -66,7 +69,8 @@
       changed = false; document.getElementById("chat-save-status").textContent = "Loaded. Changes apply to new messages.";
       const health = await api("/ai/status" + query()); if (current !== generation) return;
       const labels = {ready:"Ready", missing_api_key:"API key required", not_running:"Not running", unavailable:"Unavailable; check Logs"};
-      document.getElementById("chat-health").textContent = `Model: ${labels[health.state] || health.state}. ${health.chat_error ? "Recent request failed; check Logs." : "No recent chat errors."}`;
+      const webLabels = {ready:"Ready", not_used:"Not used yet", unavailable:"Recent lookup failed"};
+      document.getElementById("chat-health").textContent = `Model: ${labels[health.state] || health.state}. Web search: ${config.web_enabled ? (webLabels[health.web_search] || "Ready when needed") : "Off"}. ${health.chat_error ? "Recent request failed; check Logs." : "No recent chat errors."}`;
       const usage = document.getElementById("chat-usage"); usage.replaceChildren();
       for (const row of health.usage || []) {
         const hit = row.cache_hit_tokens || 0, miss = row.cache_miss_tokens || 0;
