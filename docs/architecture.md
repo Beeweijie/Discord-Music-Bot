@@ -152,6 +152,9 @@ blocks installation; rollback restores application code/environment and retains 
 2. Normalize an immutable event with guild/channel/member/message IDs, reply reference and
    timestamp. Names are display data. Explicit mentions/replies or configured leading aliases
    mark direct address.
+   The model receives the bot's authenticated member ID and actual mention IDs. Pure mentions
+   of other members are skipped locally; a model cannot label someone else's mention as a call
+   to this bot. Matching display names do not establish identity.
 3. Append to that channel's bounded context; optionally retain a source for memory. Each
    channel has one pending worker. Debounce combines bursts; maximum wait prevents starvation.
 4. Apply quiet hours, autonomous cooldown and hourly/rolling-24-hour send quotas. Direct

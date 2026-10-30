@@ -233,6 +233,7 @@
     "tests/integration/__init__.py",
     "tests/integration/test_ai.py",
     "tests/integration/test_ai_http.py",
+    "tests/integration/test_chat_discord.py",
     "tests/management/__init__.py",
     "tests/management/test_logging.py",
     "tests/management/test_management.py",

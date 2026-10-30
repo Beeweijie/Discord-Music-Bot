@@ -151,6 +151,9 @@ class ChatService:
         current = state.messages[-1]
         direct = current.direct
         now = time.monotonic()
+        if not direct and current.mention_only:
+            await self.call('record', scope, 'skip', 'addressed_to_other')
+            return
         if direct:
             key = (scope, current.author_id)
             if len(self.user_rates) > 2048:
@@ -188,6 +191,10 @@ class ChatService:
         valid_reasons = {'addressed', 'followup', 'useful', 'interrupting', 'repetitive', 'unrelated', 'wait'}
         if action not in {'reply', 'wait', 'skip'} or reason not in valid_reasons:
             raise ValueError('Invalid participation decision.')
+        if (reason == 'addressed' and not direct and current.mentioned_user_ids
+                and current.bot_user_id not in current.mentioned_user_ids):
+            await self.call('record', scope, 'skip', 'addressed_to_other')
+            return
         target_id = str(decision.get('target_id', current.message_id))
         if target_id not in {json.loads(message['content'])['message_id'] for message in prefix[1:]}:
             raise ValueError('Model selected a message outside this channel context.')
@@ -277,7 +284,8 @@ class ChatService:
         if rows:
             rows[-1]['text'] = rows[-1]['text'][-cfg['context_chars']:]
             state.context_anchor = rows[0]['message_id']
-        identity = {key: cfg[key] for key in ('name', 'persona', 'interests')}
+        identity = {key: cfg[key] for key in ('name', 'persona', 'interests', 'aliases', 'model')}
+        identity['bot_user_id'] = next((message.bot_user_id for message in reversed(visible) if message.bot_user_id), '')
         identity.update(scope=scope, prompt_version=VERSION)
         prefix = [{'role': 'system', 'content': COMMON + '\nIdentity JSON:\n' + json.dumps(identity, ensure_ascii=False, sort_keys=True)}]
         prefix.extend({'role': 'assistant' if row['role'] == 'assistant' else 'user',

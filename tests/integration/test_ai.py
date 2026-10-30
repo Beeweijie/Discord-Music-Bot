@@ -1,7 +1,6 @@
 """Offline end-to-end AI feature tests; no credentials, Discord login or network."""
 import asyncio
 import copy
-import asyncio
 import json
 import tempfile
 import time
@@ -19,8 +18,8 @@ from bot_app.features.chat.settings import DEFAULTS as CHAT_DEFAULTS, validate
 from bot_app.features.memory.settings import DEFAULTS as MEMORY_DEFAULTS
 from bot_app.app.configuration import JsonSettingsRepository
 
-def event(identifier='100', author='3', text='我喜欢摇滚音乐', channel='2', direct=False, bot=False):
-    return MessageEvent(Scope('1', channel), identifier, author, 'member-' + author, text, time.time(), direct=direct, is_bot=bot)
+def event(identifier='100', author='3', text='我喜欢摇滚音乐', channel='2', direct=False, bot=False, bot_user_id='99'):
+    return MessageEvent(Scope('1', channel), identifier, author, 'member-' + author, text, time.time(), direct=direct, is_bot=bot, bot_user_id=bot_user_id)
 
 def fact(message, text='member likes rock music', **kwargs):
     return dict(kind='fact', subject_id=message.author_id, content=text, source_ids=[message.message_id],
@@ -193,6 +192,33 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await self.chat.round(self.scope, self.state, 1)
         self.state.send.assert_awaited_once_with('hello','100')
         self.assertEqual(self.state.messages[-1].author_id,'99')
+
+    async def test_mentioning_another_bot_only_never_calls_model_or_sends(self):
+        self.state.messages.clear(); self.state.messages.append(event(text='<@1366796071304564736>'))
+        await self.chat.round(self.scope,self.state,1)
+        self.model.complete.assert_not_awaited()
+        self.state.send.assert_not_awaited()
+        self.assertEqual((await self.chat.call('recent',self.scope))[0]['reason'],'addressed_to_other')
+
+    async def test_mentioning_self_still_uses_direct_reply_path(self):
+        self.state.messages.clear(); self.state.messages.append(event(text='<@!99>',direct=True))
+        self.model.complete.return_value='在呢'
+        await self.chat.round(self.scope,self.state,1)
+        self.model.complete.assert_awaited_once()
+        self.state.send.assert_awaited_once_with('在呢','100')
+
+    async def test_judge_cannot_claim_a_message_to_someone_else_addresses_self(self):
+        self.state.messages.clear(); self.state.messages.append(event(text='<@88> 你怎么看？'))
+        self.model.complete.return_value={'action':'reply','reason':'addressed','target_id':'100'}
+        await self.chat.round(self.scope,self.state,1)
+        self.model.complete.assert_awaited_once()
+        self.state.send.assert_not_awaited()
+
+    def test_context_exposes_actual_mention_ids_and_authenticated_bot_identity(self):
+        self.state.messages.clear(); self.state.messages.append(event(text='<@88> <@!77> <@&66>'))
+        prefix=self.chat.model_prefix(self.scope,self.state,self.cfg)
+        self.assertIn('"bot_user_id": "99"',prefix[0]['content'])
+        self.assertEqual(json.loads(prefix[1]['content'])['mentioned_user_ids'],['88','77'])
 
     async def test_observe_mode_calls_judge_but_never_sends(self):
         self.cfg['mode'] = 'observe'

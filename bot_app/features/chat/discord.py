@@ -24,12 +24,14 @@ class Chat(commands.Cog):
         me = self.bot.user
         reference = message.reference
         replied = getattr(reference, 'resolved', None)
-        direct = bool(me and (me in message.mentions or getattr(getattr(replied, 'author', None), 'id', None) == me.id))
+        direct = bool(me and (any(user.id == me.id for user in message.mentions)
+                              or getattr(getattr(replied, 'author', None), 'id', None) == me.id))
         cfg = self.bot.management.get_settings('chat', message.guild.id)
         direct = direct or any(message.content.lstrip().casefold().startswith(name.casefold()) for name in cfg['aliases'])
         return MessageEvent(Scope(str(message.guild.id), str(message.channel.id)), str(message.id), str(message.author.id),
                             message.author.display_name, message.content, message.created_at.timestamp(),
-                            str(reference.message_id) if reference else '', direct, message.author.bot)
+                            str(reference.message_id) if reference else '', direct, message.author.bot,
+                            str(me.id) if me else '')
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -49,7 +51,7 @@ class Chat(commands.Cog):
             # No raw model-provided target IDs or mention permissions are passed to Discord.
             sent = await message.channel.send(text, allowed_mentions=discord.AllowedMentions.none())
             return MessageEvent(event.scope, str(sent.id), str(sent.author.id), sent.author.display_name,
-                                sent.content, sent.created_at.timestamp(), is_bot=True)
+                                sent.content, sent.created_at.timestamp(), is_bot=True, bot_user_id=str(sent.author.id))
         await self.runtime.chat.receive(event, send, can_send)
 
     @commands.Cog.listener()

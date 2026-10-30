@@ -1,5 +1,6 @@
 """Immutable platform identities; never populated from model output."""
 from dataclasses import dataclass
+import re
 
 def snowflake(value):
     value = str(value)
@@ -31,13 +32,25 @@ class MessageEvent:
     reply_to: str = ""
     direct: bool = False
     is_bot: bool = False
+    bot_user_id: str = ''
 
     def __post_init__(self):
         object.__setattr__(self, "message_id", snowflake(self.message_id))
         object.__setattr__(self, "author_id", snowflake(self.author_id))
+        if self.bot_user_id:
+            object.__setattr__(self, 'bot_user_id', snowflake(self.bot_user_id))
+
+    @property
+    def mentioned_user_ids(self):
+        return list(dict.fromkeys(re.findall(r'<@!?(\d+)>', self.content[:4000])))
+
+    @property
+    def mention_only(self):
+        return bool(re.fullmatch(r'(?:\s*<@(?:!|&)?\d+>\s*)+', self.content))
 
     def context(self):
         return {"message_id": self.message_id, "author_id": self.author_id,
                 "name": self.author_name[:100], "text": self.content[:4000],
                 "timestamp": self.created_at, "reply_to": self.reply_to,
+                "mentioned_user_ids": self.mentioned_user_ids,
                 "role": "assistant" if self.is_bot else "member"}
