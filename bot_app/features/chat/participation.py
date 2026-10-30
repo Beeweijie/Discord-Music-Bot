@@ -1,5 +1,6 @@
 """Deterministic timing policy; semantic reply/skip choice remains with the model."""
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True)
@@ -8,6 +9,27 @@ class ParticipationPlan:
     interval: float
     followup: bool
     activity: int
+
+
+def response_nudge(state,cfg):
+    """An explicit ping in our own uninterrupted exchange needs no semantic gate."""
+    if cfg.get('participation_style')!='active' or not state.messages:
+        return False
+    current=state.messages[-1]
+    if current.is_bot or (current.mentioned_user_ids and current.bot_user_id not in current.mentioned_user_ids):
+        return False
+    if not re.fullmatch(r'(?:[?？]+|回(?:我)?(?:一下|个话|话|一声)?|说(?:句话|话)|还在(?:吗|么)?|在吗|'
+                        r'怎么说[，,\s]*(?:现在呢|呢)|怎么不(?:回|说话))[?？!！。\s]*',current.content.strip()):
+        return False
+    if state.last_author!=current.author_id:
+        return False
+    max_age=1800 if re.fullmatch(r'[?？]+',current.content.strip()) else 3600
+    for row in reversed(list(state.messages)[:-1]):
+        if row.is_bot:
+            return 0<=current.created_at-row.created_at<max_age
+        if row.author_id!=current.author_id:
+            return False
+    return False
 
 
 def participation_plan(state,cfg,now):

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from bot_app.features.chat.participation import participation_plan
+from bot_app.features.chat.participation import participation_plan,response_nudge
 from bot_app.features.chat.service import ChannelState,ChatService
 from bot_app.features.chat.reply import ReplyGenerator
 from bot_app.features.chat.settings import DEFAULTS,validate
@@ -58,6 +58,26 @@ class ParticipationTests(unittest.TestCase):
         self.state.last_sent=100; self.state.last_author='3'
         self.state.messages=deque([event(author='4'),event(author='3',identifier='101')])
         self.assertFalse(participation_plan(self.state,self.cfg,220).followup)
+
+    def test_explicit_nudges_require_our_own_recent_uninterrupted_exchange(self):
+        now=time.time()
+        bot=MessageEvent(Scope('1','2'),'99','99','bot','名字被拿来玩梗了。',now-1320,is_bot=True)
+        self.state.messages=deque([bot,event('有没有可能你名字就来自这个梗',identifier='100'),event('回一下？',identifier='101')])
+        self.state.last_author='3'
+        self.assertTrue(response_nudge(self.state,self.cfg))
+        self.state.messages[0]=MessageEvent(Scope('1','2'),'99','99','bot','名字被拿来玩梗了。',now-2700,is_bot=True)
+        self.assertTrue(response_nudge(self.state,self.cfg))
+        self.state.messages[-1]=event('?',identifier='101')
+        self.assertFalse(response_nudge(self.state,self.cfg))
+        self.state.messages[0]=bot
+        self.state.messages[-1]=event('回一下？',identifier='101')
+        self.state.messages.insert(2,event('其他群友的话',author='4',identifier='102'))
+        self.assertFalse(response_nudge(self.state,self.cfg))
+        self.state.messages.remove(self.state.messages[2])
+        self.state.messages[-1]=event('<@88> 回一下？',identifier='101')
+        self.assertFalse(response_nudge(self.state,self.cfg))
+        self.state.messages=deque([event('回一下？')])
+        self.assertFalse(response_nudge(self.state,self.cfg))
 
     def test_busy_channels_get_more_space_but_direct_calls_stay_fast(self):
         self.state.messages=deque(event('大家聊聊看',identifier=str(i)) for i in range(100,108))
@@ -216,6 +236,63 @@ class ToolTransportTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ActiveSchedulingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_nudge_reaches_mock_send_without_a_judge(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            model=SimpleNamespace(complete=AsyncMock(return_value='在，接着说。'))
+            cfg=dict(DEFAULTS,enabled=True,channels=['2'],mode='participate',participation_style='active')
+            memory=MemoryService(MemoryRepository(Path(scratch)/'memory.db'),model,
+                lambda _:dict(MEMORY_DEFAULTS,enabled=True),lambda _:True)
+            chat=ChatService(ChatRepository(Path(scratch)/'chat.db'),model,memory,lambda _:cfg)
+            state=ChannelState(sequence=1,last_sent=time.monotonic()-1320,last_author='3')
+            state.messages.extend([MessageEvent(Scope('1','2'),'99','99','bot','名字的梗？',time.time()-1320,is_bot=True),
+                                   event('回一下？')])
+            state.can_send=AsyncMock(return_value=True)
+            state.send=AsyncMock(return_value=MessageEvent(Scope('1','2'),'200','99','bot','在，接着说。',time.time(),is_bot=True))
+            try:
+                await chat.round('discord:1:2',state,1)
+                model.complete.assert_awaited_once()
+                self.assertEqual(model.complete.await_args.args[0],'chat_reply')
+                state.send.assert_awaited_once_with('在，接着说。','100')
+            finally:
+                await chat.close(); await memory.close()
+
+    async def test_malformed_judge_has_a_specific_safe_error_without_sending(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            model=SimpleNamespace(complete=AsyncMock(return_value={'a':'r','r':'useful','i':999}))
+            cfg=dict(DEFAULTS,enabled=True,channels=['2'],mode='participate',participation_style='active')
+            memory=MemoryService(MemoryRepository(Path(scratch)/'memory.db'),model,lambda _:dict(MEMORY_DEFAULTS),lambda _:True)
+            chat=ChatService(ChatRepository(Path(scratch)/'chat.db'),model,memory,lambda _:cfg)
+            state=ChannelState(sequence=1); state.messages.append(event())
+            state.can_send=AsyncMock(return_value=True); state.send=AsyncMock()
+            try:
+                await chat.round('discord:1:2',state,1)
+                row=(await chat.call('recent','discord:1:2'))[0]
+                self.assertEqual(row['reason'],'judge_invalid_index')
+                self.assertEqual(json.loads(row['detail'])['visible_indexes'],[0])
+                self.assertNotIn(state.messages[-1].content,row['detail'])
+                self.assertEqual(model.complete.await_count,2)
+                state.send.assert_not_awaited()
+            finally:
+                await chat.close();await memory.close()
+
+    async def test_one_bounded_judge_repair_can_recover_to_a_single_send(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            model=SimpleNamespace(complete=AsyncMock(side_effect=[{'a':'r','i':99},
+                {'a':'r','r':'useful','i':0},'这游戏的配乐不错。']))
+            cfg=dict(DEFAULTS,enabled=True,channels=['2'],mode='participate',participation_style='active')
+            memory=MemoryService(MemoryRepository(Path(scratch)/'memory.db'),model,lambda _:dict(MEMORY_DEFAULTS),lambda _:True)
+            chat=ChatService(ChatRepository(Path(scratch)/'chat.db'),model,memory,lambda _:cfg)
+            state=ChannelState(sequence=1);state.messages.append(event())
+            state.can_send=AsyncMock(return_value=True)
+            state.send=AsyncMock(return_value=MessageEvent(Scope('1','2'),'200','99','bot','这游戏的配乐不错。',time.time(),is_bot=True))
+            try:
+                await chat.round('discord:1:2',state,1)
+                self.assertEqual([c.args[0] for c in model.complete.await_args_list],['chat_judge','chat_judge','chat_reply'])
+                self.assertEqual(model.complete.await_args_list[1].kwargs['max_tokens'],96)
+                state.send.assert_awaited_once()
+            finally:
+                await chat.close();await memory.close()
+
     async def test_restart_restores_the_recipient_of_the_last_bot_turn(self):
         with tempfile.TemporaryDirectory() as scratch:
             model=SimpleNamespace(complete=AsyncMock())

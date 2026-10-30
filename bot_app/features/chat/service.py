@@ -17,10 +17,10 @@ from bot_app.shared.redaction import contains_secret
 from bot_app.shared.llm.deepseek import BudgetExceeded
 from .settings import for_channel
 from .prompts import COMMON, EXPRESSION, STYLE_EXAMPLES, VERSION
-from .participation import participation_plan
+from .participation import participation_plan, response_nudge
 from .reply import ReplyGenerator
 from .thinking import thinking_plan, ThinkingPlan
-from .judgement import judge_messages, normalize, needs_deep_memory
+from .judgement import judge_messages, normalize, needs_deep_memory, DecisionError
 from .delivery import reply_parts
 
 logger = logging.getLogger(__name__)
@@ -203,13 +203,25 @@ class ChatService:
         except Exception:
             logger.warning('Shallow memory unavailable')
         target_ids={current.message_id}
-        if direct:
+        if direct or response_nudge(state,cfg):
             decision = {"action": "reply", "reason": "addressed", "target_id": current.message_id}
         else:
             thin,targets=judge_messages(state,cfg,shallow,plan)
-            raw=await self.model.complete('chat_judge',thin,scope=scope,model=cfg['model'],
-                json_mode=True,max_tokens=64,daily_limit=cfg['daily_model_calls'])
-            decision=normalize(raw,targets)
+            for attempt in range(2):
+                raw=await self.model.complete('chat_judge',thin,scope=scope,model=cfg['model'],
+                    json_mode=True,max_tokens=64 if attempt==0 else 96,daily_limit=cfg['daily_model_calls'])
+                try:
+                    decision=normalize(raw,targets)
+                    break
+                except DecisionError as error:
+                    await self.call('record',scope,'error','judge_'+error.code,
+                                    {'prompt':VERSION,'visible_indexes':list(targets),'attempt':attempt+1})
+                    logger.warning('Chat judgement rejected: %s',error.code)
+                    if attempt or state.sequence!=snapshot or not self.allowed(scope) or revision(self.config(scope))!=cfg_revision:
+                        return
+                    # One bounded repair; never echo a malformed model response or guess a target.
+                    thin=thin+[{'role':'user','content':'Return the specified decision JSON only. '
+                        'Use a=r/w/s and an integer i from '+json.dumps(list(targets))+'.'}]
             target_ids=set(targets.values())
         action, reason = decision.get('action'), decision.get('reason')
         valid_reasons = {'addressed', 'followup', 'useful', 'interrupting', 'repetitive', 'unrelated', 'wait'}

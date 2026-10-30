@@ -41,6 +41,24 @@ class ThinDecisionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize({'a':'r','r':'useful','i':99},{2:'100'})
 
+    def test_valid_decisions_accept_numeric_indexes_and_known_long_action_names(self):
+        result=normalize({'a':'reply','r':'respond_to_member','i':'2','d':0,'t':0},{2:'100'})
+        self.assertEqual(result['action'],'reply')
+        self.assertEqual(result['reason'],'useful')
+        self.assertEqual(result['target_id'],'100')
+        self.assertEqual(normalize({'action':'reply','reason':'followup','i':2},{2:'100'})['target_id'],'100')
+
+    def test_reply_never_guesses_a_target_for_invalid_indexes(self):
+        for index in (True,2.5,None,99,'99'):
+            with self.subTest(index=index),self.assertRaises(ValueError):
+                normalize({'a':'r','r':'useful','i':index},{2:'100'})
+        with self.assertRaises(ValueError):
+            normalize({'a':'r|w|s','r':'useful','i':2},{2:'100'})
+
+    def test_silent_decisions_do_not_require_a_reply_target(self):
+        result=normalize({'a':'w','r':'wait'},{2:'100'})
+        self.assertEqual((result['action'],result['target_id']),('wait','100'))
+
     def test_compression_keeps_bot_turn_and_unanswered_question_before_a_nudge(self):
         now=time.time()
         scope=Scope('1','2')
@@ -70,6 +88,9 @@ class ThinDecisionTests(unittest.TestCase):
         self.assertIn('100',targets.values())
         self.assertIn('106',targets.values())
         self.assertLessEqual(estimated_tokens(''.join(row['content'] for row in messages)),300)
+        context=json.loads(messages[1]['content'])
+        self.assertEqual([row[0] for row in context['msgs']],list(range(len(context['msgs']))))
+        self.assertEqual(list(targets),list(range(len(context['msgs']))))
 
     def test_restored_mentions_use_current_authenticated_bot_id(self):
         scope=Scope('1','2')

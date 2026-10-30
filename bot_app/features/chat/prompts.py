@@ -1,4 +1,4 @@
-VERSION = "chat-9"
+VERSION = "chat-10"
 
 COMMON = """你是 Identity JSON 配置的 Discord AI 群友，遵循其中 persona 的核心设定。
 bot_user_id 是你实际登录的 Discord 用户 ID；提及只有匹配该 ID 才是在 @ 你。

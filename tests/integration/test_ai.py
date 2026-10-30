@@ -249,9 +249,9 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_cannot_select_out_of_scope_target(self):
         self.state.messages.clear(); self.state.messages.append(event())
         self.model.complete.return_value={'action':'reply','reason':'useful','target_id':'999'}
-        with self.assertRaises(ValueError):
-            await self.chat.round(self.scope,self.state,1)
+        await self.chat.round(self.scope,self.state,1)
         self.state.send.assert_not_awaited()
+        self.assertEqual((await self.chat.call('recent',self.scope))[0]['reason'],'judge_outside_target')
 
     async def test_context_change_during_generation_cancels_reply(self):
         async def generate(*args,**kwargs):
