@@ -16,7 +16,7 @@ from bot_app.shared.revisions import revision
 from bot_app.shared.redaction import contains_secret
 from bot_app.shared.llm.deepseek import BudgetExceeded
 from .settings import for_channel
-from .prompts import COMMON, VERSION
+from .prompts import COMMON, EXPRESSION, STYLE_EXAMPLES, VERSION
 from .participation import participation_plan
 from .reply import ReplyGenerator
 from .thinking import thinking_plan, ThinkingPlan
@@ -228,15 +228,20 @@ class ChatService:
             await self.call('record', scope, 'observed', reason, {'memory_ids': [row['id'] for row in memories]})
             return
         # Only after deciding to reply do we pay for vision, full persona/history and deep recall.
+        image_status = ('recognized' if current.image_descriptions else 'not_provided' if not current.images
+                        else 'disabled' if not cfg.get('vision_enabled') else 'unavailable')
         if self.vision and cfg.get('vision_enabled') and current.images and not current.image_descriptions:
             try:
                 descriptions = await self.vision.describe(current,cfg)
+                image_status = 'recognized' if any(descriptions) else 'failed'
             except BudgetExceeded:
                 raise
             except Exception:
-                descriptions = ('图片识别暂不可用，不能推测图中内容。',)
+                descriptions = ()
+                image_status = 'failed'
             if any(contains_secret(text) for text in descriptions):
-                descriptions = ('图片中可能包含凭据，不保留识别内容。',)
+                descriptions = ()
+                image_status = 'redacted'
             if state.sequence!=snapshot:
                 return
             current=replace(current,image_descriptions=descriptions)
@@ -258,6 +263,8 @@ class ChatService:
                  'now':datetime.now(ZoneInfo(cfg['timezone'])).isoformat(),
                  'max_reply_characters':cfg['max_reply_chars'],'max_reply_tokens':cfg['reply_max_tokens'],
                  'allow_message_breaks':cfg['reply_burst_enabled'],
+                 'vision':{'enabled':bool(cfg.get('vision_enabled')),'message_id':current.message_id,
+                           'attachments':len(current.images),'status':image_status},
                  'participation':{'style':cfg['participation_style'],'followup':plan.followup,'recent_messages':plan.activity}}
         if self.persona:
             payload['persona_learning']=await self.persona.guidance(scope)
@@ -422,7 +429,8 @@ class ChatService:
         identity = {key: cfg[key] for key in ('name', 'persona', 'interests', 'aliases', 'model')}
         identity['bot_user_id'] = next((message.bot_user_id for message in reversed(visible) if message.bot_user_id), '')
         identity.update(scope=scope, prompt_version=VERSION)
-        prefix = [{'role': 'system', 'content': COMMON + '\nIdentity JSON:\n' + json.dumps(identity, ensure_ascii=False, sort_keys=True)}]
+        prefix = [{'role': 'system', 'content': COMMON + '\n' + EXPRESSION + '\n' + STYLE_EXAMPLES
+                   + '\nIdentity JSON:\n' + json.dumps(identity, ensure_ascii=False, sort_keys=True)}]
         prefix.extend({'role': 'assistant' if row['role'] == 'assistant' else 'user',
                        'content': json.dumps(row, ensure_ascii=False, sort_keys=True)} for row in rows)
         return prefix

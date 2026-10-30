@@ -220,6 +220,17 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"bot_user_id": "99"',prefix[0]['content'])
         self.assertEqual(json.loads(prefix[1]['content'])['mentioned_user_ids'],['88','77'])
 
+    def test_persona_and_style_examples_do_not_become_channel_history(self):
+        core = '你是deepseek，也是蓝色大肥鱼\n你现在是一个喜欢在网上冲浪的群友，你爱怎么说话就怎么说话'
+        self.cfg['persona'] = core
+        original = [row.context() for row in self.state.messages]
+        prefix = self.chat.model_prefix(self.scope,self.state,self.cfg)
+        identity = json.loads(prefix[0]['content'].split('\nIdentity JSON:\n',1)[1])
+        self.assertEqual(identity['persona'],core)
+        self.assertEqual(self.cfg['persona'],core)
+        self.assertEqual([json.loads(row['content']) for row in prefix[1:]],original)
+        self.assertEqual([row.context() for row in self.state.messages],original)
+
     async def test_observe_mode_calls_judge_but_never_sends(self):
         self.cfg['mode'] = 'observe'
         self.state.messages.clear(); self.state.messages.append(event())

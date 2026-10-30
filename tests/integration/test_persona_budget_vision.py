@@ -285,6 +285,46 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await service.describe(event(images=({'id':'1','url':'unused'},)),DEFAULTS),())
         model.complete.assert_not_awaited()
 
+    async def test_reply_receives_current_image_outcome_without_fake_observations(self):
+        image = discord_image(self.attachment(),'2')
+        cases = [
+            ('not_provided',True,(),(),False),
+            ('disabled',False,(image,),(),False),
+            ('unavailable',True,(image,),None,False),
+            ('failed',True,(image,),OSError('download failed'),True),
+            ('failed',True,(image,),(),True),
+            ('redacted',True,(image,),('DEEPSEEK_API_KEY=not-a-real-key',),True),
+            ('recognized',True,(image,),('一条蓝色的鱼。',),True),
+        ]
+        for expected,enabled,images,result,called in cases:
+            with self.subTest(status=expected,result=type(result).__name__), tempfile.TemporaryDirectory() as folder:
+                cfg = dict(copy.deepcopy(DEFAULTS),enabled=True,channels=['2'],mode='participate',vision_enabled=enabled)
+                model = SimpleNamespace(complete=AsyncMock(return_value='嗯。'))
+                describe = AsyncMock(side_effect=result) if isinstance(result,Exception) else AsyncMock(return_value=result)
+                vision = None if result is None else SimpleNamespace(describe=describe)
+                memory = MemoryService(MemoryRepository(Path(folder)/'memory.db'),model,
+                    lambda _:dict(MEMORY_DEFAULTS,enabled=True),lambda _:True)
+                chat = ChatService(ChatRepository(Path(folder)/'chat.db'),model,memory,lambda _:cfg,vision=vision)
+                try:
+                    state = ChannelState()
+                    state.messages.append(event(text='你看看？',direct=True,images=images))
+                    state.sequence = 1
+                    state.can_send = AsyncMock(return_value=True)
+                    state.send = AsyncMock(return_value=MessageEvent(Scope('1','2'),'200','99','bot','嗯。',time.time(),is_bot=True))
+                    await chat.round('discord:1:2',state,1)
+                    model.complete.assert_awaited_once()
+                    payload = json.loads(model.complete.await_args.args[1][-1]['content'].split('\nSupplemental context JSON:\n',1)[1])
+                    self.assertEqual(payload['vision'],{'status':expected,'enabled':enabled,'attachments':len(images),'message_id':'100'})
+                    self.assertEqual(describe.await_count,int(called))
+                    retained = state.messages[0].image_descriptions
+                    self.assertEqual(retained,('一条蓝色的鱼。',) if expected=='recognized' else ())
+                    self.assertNotIn(image['url'],str(model.complete.await_args.args[1]))
+                    self.assertNotIn('download failed',str(model.complete.await_args.args[1]))
+                    self.assertNotIn('not-a-real-key',str(model.complete.await_args.args[1]))
+                    state.send.assert_awaited_once()
+                finally:
+                    await chat.close(); await memory.close()
+
     def test_image_observations_count_towards_the_context_window(self):
         state=ChannelState()
         for i in range(100,110):
