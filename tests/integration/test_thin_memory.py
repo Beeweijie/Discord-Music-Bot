@@ -41,6 +41,43 @@ class ThinDecisionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize({'a':'r','r':'useful','i':99},{2:'100'})
 
+    def test_compression_keeps_bot_turn_and_unanswered_question_before_a_nudge(self):
+        now=time.time()
+        scope=Scope('1','2')
+        state=ChannelState(messages=deque([
+            MessageEvent(scope,'100','99','bot','看到两张图。'*30+'拿我名字当梗了？',now-840,is_bot=True,bot_user_id='99'),
+            MessageEvent(scope,'101','3','member','有没有可能你名字是因为有这个梗才这么取的',now-720,bot_user_id='99'),
+            MessageEvent(scope,'102','3','member','?',now,bot_user_id='99')]))
+        cfg=dict(DEFAULTS,participation_style='active',persona='你是deepseek，也是蓝色大肥鱼')
+        messages,targets=judge_messages(state,cfg,[{'content':'不重要的旧摘要'*20}],ParticipationPlan(1,2,True,1))
+        context=json.loads(messages[1]['content'])
+        self.assertEqual([row[1] for row in context['msgs']],['me','A','A'])
+        self.assertIn('名字当梗',context['msgs'][0][2])
+        self.assertIn('有没有可能',context['msgs'][1][2])
+        self.assertEqual(context['msgs'][-1][2],'?')
+        self.assertEqual(context['gap_s'],720)
+        self.assertTrue(context['followup'])
+        self.assertEqual(set(targets.values()),{'100','101','102'})
+        self.assertLessEqual(estimated_tokens(''.join(row['content'] for row in messages)),300)
+
+    def test_recent_bot_anchor_is_kept_after_several_unanswered_messages(self):
+        now=time.time(); scope=Scope('1','2')
+        state=ChannelState(messages=deque([
+            MessageEvent(scope,'100','99','bot','那只猫在打哈欠。',now-120,is_bot=True),
+            *(MessageEvent(scope,str(i),'3','member','你说的是哪只？',now-110+i-101,bot_user_id='99') for i in range(101,107))]))
+        cfg=dict(DEFAULTS,participation_style='active')
+        messages,targets=judge_messages(state,cfg,[],ParticipationPlan(1,2,True,1))
+        self.assertIn('100',targets.values())
+        self.assertIn('106',targets.values())
+        self.assertLessEqual(estimated_tokens(''.join(row['content'] for row in messages)),300)
+
+    def test_restored_mentions_use_current_authenticated_bot_id(self):
+        scope=Scope('1','2')
+        state=ChannelState(messages=deque([
+            MessageEvent(scope,'100','3','member','<@99> 看看这个',time.time()-10),event('101',text='你怎么看？')]))
+        messages,_=judge_messages(state,DEFAULTS,[],ParticipationPlan(1,4,False,1))
+        self.assertIn('@me',messages[1]['content'])
+
 
 class LayeredMemoryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

@@ -98,11 +98,15 @@ class ChatService:
                 except Exception:
                     recent = []
                     logger.warning('Retained context unavailable; starting with current messages')
+                previous_author = ''
                 for row in recent:
                     if row.author_id not in cfg['excluded_users']:
                         state.messages.append(row)
                         if row.is_bot:
                             state.last_sent = time.monotonic() - max(0, time.time() - row.created_at)
+                            state.last_author = previous_author
+                        else:
+                            previous_author = row.author_id
         if any(message.message_id == event.message_id for message in state.messages):
             return
         state.messages.append(event)

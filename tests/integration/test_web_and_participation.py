@@ -46,6 +46,19 @@ class ParticipationTests(unittest.TestCase):
         self.assertTrue(plan.followup)
         self.assertEqual(plan.interval,2)
 
+    def test_active_followup_survives_a_few_minutes_but_expires(self):
+        self.state.last_sent=100; self.state.last_author='3'
+        self.assertTrue(participation_plan(self.state,self.cfg,220).followup)
+        self.assertTrue(participation_plan(self.state,self.cfg,940).followup)
+        self.assertFalse(participation_plan(self.state,self.cfg,1001).followup)
+        self.cfg['participation_style']='balanced'
+        self.assertFalse(participation_plan(self.state,self.cfg,220).followup)
+
+    def test_other_members_break_the_same_member_followup_hint(self):
+        self.state.last_sent=100; self.state.last_author='3'
+        self.state.messages=deque([event(author='4'),event(author='3',identifier='101')])
+        self.assertFalse(participation_plan(self.state,self.cfg,220).followup)
+
     def test_busy_channels_get_more_space_but_direct_calls_stay_fast(self):
         self.state.messages=deque(event('大家聊聊看',identifier=str(i)) for i in range(100,108))
         self.assertEqual(participation_plan(self.state,self.cfg,100).interval,12)
@@ -203,6 +216,27 @@ class ToolTransportTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ActiveSchedulingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_restart_restores_the_recipient_of_the_last_bot_turn(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            model=SimpleNamespace(complete=AsyncMock())
+            cfg=dict(DEFAULTS,enabled=True,channels=['2'],mode='participate',participation_style='active')
+            memory=MemoryService(MemoryRepository(Path(scratch)/'memory.db'),model,
+                lambda _:dict(MEMORY_DEFAULTS,enabled=True),lambda _:True)
+            now=time.time()
+            await memory.ingest(MessageEvent(Scope('1','2'),'100','3','member','说说这个梗',now-125))
+            await memory.ingest(MessageEvent(Scope('1','2'),'101','99','bot','拿我名字当梗了？',now-120,is_bot=True))
+            chat=ChatService(ChatRepository(Path(scratch)/'chat.db'),model,memory,lambda _:cfg)
+            chat._drain=AsyncMock()
+            try:
+                await chat.receive(event('有没有可能你的名字就是这么取的',identifier='102'),AsyncMock(),AsyncMock(return_value=True))
+                state=chat.channels['discord:1:2']
+                await state.task
+                self.assertEqual(state.last_author,'3')
+                self.assertTrue(participation_plan(state,cfg,time.monotonic()).followup)
+                model.complete.assert_not_awaited()
+            finally:
+                await chat.close(); await memory.close()
+
     async def test_unmentioned_followup_is_delayed_then_reconsidered_without_new_input(self):
         with tempfile.TemporaryDirectory() as scratch:
             model=SimpleNamespace(complete=AsyncMock(return_value={'action':'skip','reason':'repetitive','target_id':'100'}))

@@ -15,7 +15,15 @@ def participation_plan(state,cfg,now):
     since=max(0,now-state.last_sent)
     active=cfg.get('participation_style')=='active'
     recent=[row for row in list(state.messages)[-15:] if not row.is_bot and current.created_at-row.created_at<20]
-    followup=bool(state.last_sent and since<90 and current.author_id==state.last_author)
+    same_exchange=True
+    for row in reversed(state.messages):
+        if row.is_bot:
+            break
+        if row.author_id!=current.author_id:
+            same_exchange=False
+            break
+    followup=bool(state.last_sent and since<(900 if active else 90)
+                  and current.author_id==state.last_author and same_exchange)
     question=any(mark in current.content for mark in ('?','？','怎么','什么','为什么','有没有','咋'))
     if current.direct:
         return ParticipationPlan(0.35,0,followup,len(recent))
