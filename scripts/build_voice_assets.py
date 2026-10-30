@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def build():
-    folder = ROOT / 'bot_app/infrastructure/media'
+    folder = ROOT / 'bot_app/features/music/media'
     lines = ['"""Generated fixed replies; rebuild with scripts/build_voice_assets.py.',
              'Voice/model attribution: docs/voice-replies.md. No microphone recordings.',
              '"""', 'import base64', 'import zlib', '', 'CLIPS = {']

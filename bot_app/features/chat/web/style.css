@@ -1,0 +1,12 @@
+textarea{display:block;width:100%;font:inherit;line-height:1.6;margin-top:5px;padding:7px;border:1px solid #aaa;background:#fff;color:#222;resize:vertical}
+fieldset{border:1px solid #ccc;margin:18px 0;padding:12px}legend{padding:0 6px;font-weight:600}
+.channel-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.channel-options label{overflow-wrap:anywhere}#chat-advanced,#memory-advanced{margin:16px 0}
+#chat-overrides{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:18px}
+#chat-overrides h3{grid-column:1/-1;margin:0;font-size:14px}
+#chat-health,#memory-health{margin:12px 0 0;overflow-wrap:anywhere}
+#chat-decisions,#chat-usage{max-height:420px;overflow:auto}.decision-row{padding:8px 0;border-top:1px solid #ddd;overflow-wrap:anywhere}
+.memory-record{padding:18px 0;border-top:1px solid #ccc;overflow-wrap:anywhere}.memory-record>p:not(.muted){white-space:pre-wrap;max-width:75ch}
+.memory-record details{margin-top:10px}.memory-record details p{margin:10px 0}.memory-record textarea{margin-bottom:10px}
+#memory-subject{max-width:400px;margin-bottom:10px}#memory-records{margin-top:16px}
+@media(max-width:700px){.channel-options,#chat-overrides{grid-template-columns:1fr}.memory-record .play-controls{gap:8px}.memory-record button{min-height:36px}}

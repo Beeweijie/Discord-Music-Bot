@@ -6,7 +6,7 @@
 
 说“闭嘴”“安静”“取消”可停止当前回复、结束本人的监听和候选选择，不停止音乐；同频道成员还可用 `!voice quiet` 或 `/voice quiet` 文字兜底。搜索和指令任务独立于识别循环，新唤醒或取消会撤销该成员旧任务，旧搜索即使稍后返回也不会执行。重新喊“喵酱喵酱”可退出候选菜单再说新指令。“播放歌单／列表／队列”播放当前队列，不搜索名为“歌单”的视频。
 
-五句固定回复（包括候选选择提示）存放在 `bot_app/infrastructure/media/replies/`，48 kHz、16-bit、双声道 WAV，总计约 1.3 MiB。运行时只播放本地文件，无需 TTS 网络服务，也不会在树莓派常驻加载语音合成模型。
+五句固定回复（包括候选选择提示）存放在 `bot_app/features/music/media/replies/`，48 kHz、16-bit、双声道 WAV，总计约 1.3 MiB。运行时只播放本地文件，无需 TTS 网络服务，也不会在树莓派常驻加载语音合成模型。
 
 为兼容旧更新器的文件白名单，Release ZIP 将同一组固定音频无损压缩存放在 `voice_assets.py`，不包含原始 WAV 或根目录 `requirements-voice.txt`。源码仓库保留 WAV 和依赖清单；可用 `python scripts/build_voice_assets.py` 重新生成嵌入资源。运行时优先读取源码 WAV，否则解码内置资源，音频内容相同。语音依赖安装入口为 `python scripts/install_voice.py`。
 

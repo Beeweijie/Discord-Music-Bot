@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light"><title>喵酱 · Bot Dashboard</title>
+  <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+  <script src="/ai.js" defer></script><script src="/memory.js" defer></script>
+  <link rel="stylesheet" href="/ai.css">
+</head>
+<body>
+<div id="app" class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="#overview">Bot Dashboard</a>
+    <div class="workspace" id="workspace-name">Bot</div>
+
+    <nav aria-label="Main navigation">
+      <a href="#overview" data-page="overview" class="active">Overview</a>
+      <a href="#music" data-page="music">Music</a>
+      <a href="#settings" data-page="settings">Settings</a>
+      <a href="#chat" data-page="chat">Group chat</a>
+      <a href="#memory" data-page="memory">Memory</a>
+      <a href="#logs" data-page="logs">Logs</a>
+    </nav>
+
+  </aside>
+  <div class="main-wrap">
+    <header class="topbar"><span>Dashboard / <strong id="breadcrumb">Overview</strong></span><div><span id="connection" class="connection">Connecting</span></div></header>
+    <main>
+      <div id="network-error" class="banner warning" role="alert" hidden></div>
+      <section id="page-overview" class="page">
+        <div class="page-heading"><div><h1>Status</h1><p class="muted">Connection and playback status.</p></div><button id="refresh" class="secondary">Refresh</button></div>
+        <section class="card status-panel" aria-label="Bot status">
+          <dl class="status-list">
+            <dt>Bot name</dt><dd id="bot-name">—</dd>
+            <dt>Status</dt><dd id="hero-badge">Connecting</dd>
+            <dt>Uptime</dt><dd id="uptime">—</dd>
+            <dt>Servers</dt><dd id="guild-count">—</dd>
+            <dt>Voice connections</dt><dd id="session-count">—</dd>
+            <dt>Discord latency</dt><dd><span id="latency">—</span> ms</dd>
+          </dl>
+          <p id="hero-detail" class="muted">Loading status...</p>
+          <div class="status-footer"><span id="queue-summary">Queued tracks: —</span><span id="updated">Waiting for an update</span></div>
+        </section>
+        <article class="card"><div class="section-heading"><div><h2>Music by server</h2><p class="muted">Current voice connections and saved queues</p></div><a href="#music" class="text-link">Open music controls</a></div><div id="overview-sessions"></div></article>
+
+      </section>
+      <section id="page-music" class="page" hidden>
+        <div class="page-heading"><div><h1>Music</h1><p class="muted">Select a server to manage playback and saved queues.</p></div><span id="music-count" class="pill">0 servers</span></div>
+        <div id="music-empty" class="card empty"><h2>No music playing</h2><p>Join a Discord voice channel and use <code>/play</code> or <code>!play</code> to start.</p></div>
+        <div id="music-content" hidden><div id="session-picker" class="session-picker" aria-label="Music servers"></div>
+          <p id="music-channel" class="muted" aria-live="polite"></p>
+          <p id="music-scope" class="muted">Each server has one shared queue. Moving the bot keeps the current track and queue.</p>
+          <div class="music-grid"><article class="card player"><h2 id="track-title">—</h2><p id="track-meta" class="muted">—</p><div class="play-controls"><button data-action="pause" class="primary">Pause</button><button data-action="resume" class="primary">Resume</button><button data-action="skip" class="secondary">Skip</button></div>
+          <form id="volume-form" class="player-setting"><label for="volume">Volume</label><input id="volume" type="range" min="0" max="100" value="40"><output id="volume-value" for="volume">40%</output><button class="secondary" type="submit">Apply</button></form>
+          <form id="seek-form" class="player-setting"><label for="seek-position">Seek</label><input id="seek-position" type="text" required placeholder="m:ss, e.g. 1:30" aria-label="Seek position (m:ss or seconds)"><button class="secondary" type="submit">Seek</button></form>
+          <form id="loop-form" class="player-setting"><label for="loop">Loop</label><select id="loop"><option value="off">Off</option><option value="one">Track</option><option value="queue">Queue</option></select><button class="secondary" type="submit">Apply</button></form>
+          <div class="play-controls"><button data-action="replay">Replay</button><button data-action="surprise">🎲 Surprise next</button></div>
+          <form id="sleep-form" class="player-setting"><label for="sleep-minutes">Sleep timer</label><input id="sleep-minutes" type="number" min="0" max="1440" value="30" required><button type="submit">Set timer</button></form><p id="sleep-status" class="muted">No sleep timer. Enter 0 to cancel.</p>
+          <button data-action="stop" class="danger subtle">Stop, clear & disconnect</button></article>
+          <article class="card queue-card"><div class="section-heading"><div><h2>Up next</h2><p id="queue-count" class="muted">0 tracks</p></div><button data-action="clear" class="quiet">Clear queue</button></div><div class="play-controls"><button data-action="shuffle">Shuffle</button><button data-action="fair" title="Take turns by requester">Fair queue</button><button data-action="dedupe">Remove duplicates</button></div><label for="queue-filter">Find a track</label><input id="queue-filter" type="search" placeholder="Title or requester"><ol id="queue-list" class="queue-list"></ol><div class="play-controls"><button id="queue-prev">Previous</button><span id="queue-page" aria-live="polite"></span><button id="queue-next">Next</button></div></article></div>
+          <details class="card"><summary>Recently played</summary><ol id="history-list"></ol></details>
+          <p id="control-result" class="control-result" role="status"></p></div>
+      </section>
+      <section id="page-settings" class="page" hidden>
+        <div class="page-heading"><div><h1>Settings</h1><p class="muted">Settings are saved locally and survive browser and bot restarts.</p></div><button id="reload-settings" class="secondary">Reload</button></div>
+        <div class="card"><label for="settings-guild">Server</label><select id="settings-guild" disabled><option value="">Loading servers...</option></select><p class="muted">Settings apply only to the selected server and are saved locally.</p></div>
+        <form id="music-settings" class="card settings-card"><div class="section-heading"><div><h2>Music settings</h2><p class="muted">Music settings for this server. Lowering a limit does not delete existing tracks.</p></div><span id="music-effect" class="pill">Loading</span></div>
+          <div class="form-grid">
+            <label class="playlist-field">Default playlist URL <input name="default_playlist_url" type="url" maxlength="2048" required><small>Used when /play or !play has no input.</small></label>
+            <label>Default volume <input name="default_volume" type="number" min="0" max="100" required><small>0-100, used for new sessions</small></label>
+            <label>Queue limit <input name="max_queue_size" type="number" min="1" max="1000" required><small>1-1000 tracks, applies when adding tracks</small></label>
+            <label>Playlist import limit <input name="max_playlist_songs" type="number" min="1" max="1000" required><small>1-1000 tracks; excess tracks are sampled randomly</small></label>
+            <label>Preload tracks <input name="predownload_count" type="number" min="0" max="10" required><small>0-10 tracks; 0 disables preloading</small></label>
+            <label>Idle disconnect (seconds)<input name="idle_timeout_seconds" type="number" min="30" max="86400" required><small>30-86400 seconds; paused playback disconnects after 10 minutes</small></label>
+            <label>Cache retention (seconds)<input name="cache_max_age_seconds" type="number" min="60" max="604800" required><small>Applied during cleanup; active files are protected</small></label>
+          </div><div class="form-footer"><span id="music-save-status" role="status">Loading settings</span><button type="submit" class="primary">Save music settings</button></div>
+        </form>
+        <form id="welcome-settings" class="card settings-card"><div class="section-heading"><div><h2>Welcome messages</h2><p class="muted">Configure welcome messages for new members.</p></div><span id="welcome-effect" class="pill">Loading</span></div>
+          <div class="toggle-row"><div><strong>Enable welcome messages</strong><p class="muted">Restart the bot if member events were disabled at startup.</p></div><label class="switch"><input name="enabled" type="checkbox" aria-label="Enable welcome messages"><span></span></label></div>
+          <div class="toggle-row"><div><strong>Include bot accounts</strong><p class="muted">Turn off to welcome only human members.</p></div><label class="switch"><input name="include_bots" type="checkbox" aria-label="Include bot accounts"><span></span></label></div>
+          <label class="channel-field">Welcome channel ID <input name="channel_id" type="text" inputmode="numeric" pattern="[0-9]+" required list="channels"><datalist id="channels"></datalist><small>Use 0 for the system channel, or a text channel ID in this server.</small></label>
+          <div class="form-footer"><span id="welcome-save-status" role="status">Loading settings</span><button type="submit" class="primary">Save welcome settings</button></div>
+        </form>
+        <form id="voice_moderation-settings" class="card settings-card"><div class="section-heading"><h2>Voice moderation settings</h2><span id="voice_moderation-effect" class="pill">Stored only</span></div><p class="muted">Moderation is not connected. These settings are stored but have no effect.</p><div class="form-grid"><label><input name="enabled" type="checkbox">Enable voice moderation</label><label>Moderation level<select name="level"><option value="low">Low</option><option value="normal">Normal</option><option value="strict">Strict</option></select></label><label>Model<select name="model"><option value="small">small</option><option value="medium">medium</option></select></label></div><div class="form-footer"><span id="voice_moderation-save-status" role="status">Loading settings</span><button type="submit">Save moderation settings</button></div></form>
+        <div class="info-note"><span>ⓘ</span><p>Secrets such as the Discord token are not shown here. Voice moderation settings are stored only.</p></div>
+      </section>
+      <section id="page-chat" class="page" hidden>
+        <div class="page-heading"><div><h1>Group chat</h1><p class="muted">Choose where the bot participates and how often it speaks.</p></div><button id="chat-refresh" type="button">Reload</button></div>
+        <div class="card"><label for="chat-guild">Server</label><select id="chat-guild" disabled><option value="">Loading servers...</option></select><p id="chat-health" role="status">Loading chat status...</p><p class="muted">Set the DeepSeek key in the local .env file, then restart the bot. The key is never shown here.</p></div>
+        <form id="chat-form" class="card">
+          <label class="inline-check"><input name="enabled" type="checkbox">Enable group chat for this server</label>
+          <div class="form-grid">
+            <label>Default participation<select name="mode"><option value="observe">Observe — judge without sending</option><option value="participate">Participate — send replies</option></select></label>
+            <label>Bot name<input name="name" maxlength="100" required></label>
+            <label class="playlist-field">Personality<textarea name="persona" rows="4" maxlength="6000" required></textarea></label>
+            <label>Interests<input name="interests" maxlength="500"></label>
+            <label>Names to respond to<input name="aliases" maxlength="800"><small>Separate names with commas.</small></label>
+          </div>
+          <fieldset><legend>Allowed channels</legend><div id="chat-channels" class="channel-options">Loading channels...</div></fieldset>
+          <details><summary>Timing, limits and channel overrides</summary><div id="chat-advanced" class="form-grid"></div><div id="chat-overrides"></div></details>
+          <div class="form-footer"><span id="chat-save-status" role="status">Chat is disabled until configured.</span><button type="submit" class="primary">Save chat settings</button></div>
+        </form>
+        <article class="card"><div class="section-heading"><h2>Recent participation decisions</h2><button id="chat-decisions-refresh" type="button">Refresh decisions</button></div><p class="muted">Observe mode records these decisions without posting to Discord.</p><div id="chat-decisions" aria-live="polite">No decisions loaded.</div></article>
+        <article class="card"><h2>Model usage</h2><p class="muted">Requests and tokens by task. Daily accounting uses UTC.</p><div id="chat-usage">No model requests recorded.</div></article>
+      </section>
+      <section id="page-memory" class="page" hidden>
+        <div class="page-heading"><div><h1>Memory</h1><p class="muted">Review what the bot remembers, where it came from, and what needs correcting.</p></div><button id="memory-refresh" type="button">Reload</button></div>
+        <div class="card form-grid"><label>Server<select id="memory-guild" disabled><option value="">Loading servers...</option></select></label><label>Channel<select id="memory-channel" disabled><option value="">Select a server first</option></select></label><p id="memory-health" class="playlist-field" role="status">Loading memory status...</p></div>
+        <form id="memory-form" class="card"><h2>Memory settings</h2><label class="inline-check"><input name="enabled" type="checkbox">Remember conversations in allowed chat channels</label><label class="inline-check"><input name="semantic_search" type="checkbox">Use semantic recall when an embedding service is configured</label><p class="muted">New settings inherit server defaults. Stable facts and events retain their source messages. Observe mode produces candidates for review.</p><details><summary>Extraction and retention</summary><div id="memory-advanced" class="form-grid"></div></details><div class="form-footer"><span id="memory-save-status" role="status"></span><button class="primary" type="submit">Save memory settings</button></div></form>
+        <article class="card"><div class="section-heading"><h2>Facts and events</h2><button id="memory-export" type="button">Export channel memories</button></div><label>Filter by member ID<input id="memory-subject" inputmode="numeric" placeholder="All members and shared events"></label><label class="inline-check"><input id="memory-history" type="checkbox">Include memory history</label><button id="memory-search" type="button">Apply filter</button><div id="memory-records" aria-live="polite">Select a channel to inspect its memories.</div><div class="play-controls"><button id="memory-prev" type="button">Previous</button><span id="memory-page" role="status"></span><button id="memory-next" type="button">Next</button></div></article>
+        <form id="memory-forget" class="card"><h2>Forget a member in this channel</h2><p class="muted">Removes their retained messages and invalidates derived memories, summaries and pending replies.</p><label>Member ID<input name="subject_id" inputmode="numeric" pattern="[0-9]+" required></label><button class="danger" type="submit">Forget member</button><p id="memory-forget-status" role="status"></p></form>
+      </section>
+      <section id="page-logs" class="page" hidden>
+        <div class="page-heading"><div><h1>Logs</h1><p class="muted">Recent logs for connection and playback troubleshooting.</p></div><button id="refresh-logs" class="secondary">Refresh logs</button></div>
+        <article class="card log-card"><div class="section-heading"><h2>Log entries</h2><label class="inline-check"><input id="auto-logs" type="checkbox" checked>Auto-refresh</label></div>
+          <div class="form-grid"><label>Server<select id="log-guild"><option value="">System</option></select></label><label>Minimum level<select id="log-level"><option value="INFO">Activity</option><option value="WARNING">Warnings and errors</option><option value="ERROR">Errors only</option><option value="DEBUG">All levels</option></select></label></div>
+          <label class="inline-check"><input id="log-details" type="checkbox">Diagnostic details (includes stack traces)</label>
+          <p id="log-scope" class="muted">System contains startup and shared connection events. Each server has its own log.</p>
+          <pre id="log-output" tabindex="0">Loading logs...</pre><div class="log-footer">Latest 80 lines · repeated messages are grouped <span id="log-updated">—</span></div></article>
+      </section>
+    </main>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+</body></html>

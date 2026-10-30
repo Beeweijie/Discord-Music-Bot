@@ -42,8 +42,11 @@ def build(version, output):
             info.external_attr = 0o100644 << 16
             data = path.read_bytes()
             if path.name == "version.json":
-                data = json.dumps({"version": version, "update_schema": 1,
-                                   "files": [item.relative_to(ROOT).as_posix() for item in files]}, indent=2).encode("utf-8")
+                metadata = json.loads(data)
+                metadata.pop('source',None)
+                metadata.update(version=version, update_schema=1,
+                                files=[item.relative_to(ROOT).as_posix() for item in files])
+                data = json.dumps(metadata,indent=2).encode('utf-8')
             if path.suffix in {".bat", ".ps1", ".vbs"}:
                 data = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
             bundle.writestr(info, data)

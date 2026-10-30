@@ -18,22 +18,22 @@ Do not print `.env` or include it in support reports.
 
 | Change | File |
 |---|---|
-| Register a Discord command or autocomplete | `bot_app/presentation/discord/music.py` |
-| Buttons, Add song modal, paginated queue, cover embed | `bot_app/presentation/discord/panels.py` |
-| Shared command dispatch and lifetime | `bot_app/application/music/service.py` |
-| Basic play/pause/stop/seek commands | `bot_app/application/music/commands.py` |
-| Queue editing, personal library and sleep timer | `bot_app/application/music/extras.py` |
-| Voice connection, playback, callback and downloads | `bot_app/application/music/playback.py` |
-| Session retirement, idle checks and web control execution | `bot_app/application/music/sessions.py` |
-| Queue snapshots, restoration and checkpoints | `bot_app/application/music/recovery.py` |
-| Track identity and fair queue algorithm | `bot_app/domain/music/library.py` |
-| Web control payload validation | `bot_app/domain/control.py` |
-| Per-server defaults and limits | `bot_app/domain/settings.py` |
-| Atomic personal library storage | `bot_app/infrastructure/persistence/library.py` |
-| Plain web UI | `bot_app/presentation/api/web/` |
+| Register a Discord command or autocomplete | `bot_app/features/music/adapters/discord.py` |
+| Buttons, Add song modal, paginated queue, cover embed | `bot_app/features/music/adapters/panels.py` |
+| Shared command dispatch and lifetime | `bot_app/features/music/service.py` |
+| Basic play/pause/stop/seek commands | `bot_app/features/music/commands.py` |
+| Queue editing, personal library and sleep timer | `bot_app/features/music/extras.py` |
+| Voice connection, playback, callback and downloads | `bot_app/features/music/playback.py` |
+| Session retirement, idle checks and web control execution | `bot_app/features/music/sessions.py` |
+| Queue snapshots, restoration and checkpoints | `bot_app/features/music/recovery.py` |
+| Track identity and fair queue algorithm | `bot_app/features/music/library_rules.py` |
+| Web control payload validation | `bot_app/features/music/control.py` |
+| Per-server defaults and limits | `bot_app/features/music/settings.py` |
+| Atomic personal library storage | `bot_app/features/music/storage/library.py` |
+| Plain web UI | `bot_app/host/web/shell/` |
 
 The operation classes are parts of **one** PlaybackService, not separate services.
-Dependencies are injected in `bootstrap.py`. Older media/presenter forwarding
+Dependencies are injected in `bot_app/app/bootstrap.py`. Older media/presenter forwarding
 methods remain for the compatibility facade in `bot/music.py`; avoid adding more
 layers for a small feature. Use explicit imports, not wildcard imports.
 

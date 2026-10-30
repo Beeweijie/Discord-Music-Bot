@@ -72,6 +72,63 @@ installation has a ten-minute timeout. Failed downloads/preparation never stop
 the running bot. Upgrading a release older than v1.1.1 requires a manual install
 once so the supervisor, command and binary download-header fix are available.
 
+## Source builds: branches and commits
+
+An owner running this updater can use:
+
+```text
+!update                      latest stable Release
+!update branch:chatbot        the chatbot branch's current commit
+!update branch:feature/name   a branch containing a slash
+!update COMMIT_SHA            a 7–40 character hexadecimal commit SHA
+!update commit:COMMIT_SHA     the same explicit pinned-commit operation
+```
+
+Only the repository configured by `UPDATE_GITHUB_URL` is accepted. The optional repository
+URL form continues to select Releases. A branch name and a commit ID are different: a branch
+moves as new commits are pushed; a commit identifies one revision. Each branch update resolves
+its head once, records the full SHA and downloads that immutable source archive. A repeated
+update to the same installed commit is a no-op. Selecting an older commit is an explicit source
+rollback; there is no automatic semantic-version downgrade through the Release channel.
+
+The updater retrieves the pinned commit's complete Git tree and verifies every selected
+application file using its Git blob SHA before preparing dependencies. It rejects incomplete
+trees, missing required files, unsupported update protocols, mismatched content, links,
+traversal, duplicate paths and oversized archives. Repository source archives contain extra
+files such as workflows, WAVs and configuration examples; only the updater's application
+allowlist is installed. `.env`, actual configuration, assets and `data/` are never installed
+from the source archive. Optional voice dependencies retain the installer workflow.
+
+The staged `version.json` retains the base stable version and adds `source.kind`, `source.ref`,
+`source.commit` and `source.repository`. Preparation and completion messages display the
+branch/commit and short SHA. New code must mark the exact staged commit ready. Source builds
+share the same environment staging, configuration check, restart deadline and code rollback as
+Release updates. Bare `!update` always returns to the latest stable Release; it can replace a
+source build at the same base version. Choosing a source build is explicit and does not make
+future bare updates track that branch.
+
+Chat and memory code update as one application. Freezing only the memory implementation would
+risk incompatible calls between versions; retaining the local database is the compatibility
+boundary. The new manifest declares `data_schemas.memory: 1`. If an existing memory database's
+schema differs from a declared target schema, preparation/apply refuse the update without
+changing that database. This version does not automatically migrate or downgrade memory data.
+Older versions without the AI feature do not declare or open this store.
+
+After the bot stops and before replacing application code, the supervisor uses SQLite's backup
+API to snapshot any existing memory, chat and usage databases into
+`runtime/updates/<job-id>/data-backup/data/{memory,chat,ai}/`. Backup failure prevents code
+replacement. Local database files are not part of the code replacement or code rollback lists.
+Rollback preserves current data rather than overwriting it with the snapshot, since new memory
+could have arrived after startup. If manual data recovery is required, stop the bot and choose
+a compatible backup deliberately. Backups may contain the same private information as live
+memory; they remain local and are excluded from Git and release packages.
+
+**First installation:** an old Release-only updater cannot understand the new command before
+it is installed. Install this branch/version once using the existing source/manual installation
+workflow, retaining `.env`, `config/` and `data/`, then restart through the normal supervisor.
+After that, source updates can be requested from Discord. Pushing a branch alone does not add
+new command parsing to a bot that is still running old code.
+
 ## Linux updates failing before code replacement
 
 Versions through v1.2.0 can reject a normal Linux virtual environment with

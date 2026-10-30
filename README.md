@@ -1,5 +1,26 @@
 # Discord Music Bot
 
+The implementation is organized by feature under `bot_app/features/`, with platform hosts in
+`bot_app/host/` and dependency wiring in `bot_app/app/`. See the [architecture](docs/architecture.md).
+
+## DeepSeek group chat and memory (optional)
+
+The bot can observe a channel or decide when to join its conversation. Set `DEEPSEEK_API_KEY`
+in your local `.env`, enable **Message Content Intent** in Discord's developer portal, and use
+the dashboard's **Group chat** page to enable a server and explicitly select test channels.
+Start in **Observe** mode, review decisions, then switch a channel to **Participate**.
+Manage Server members can also use `/chat observe`, `/chat on`, `/chat off` and `/chat status`.
+
+Memory has a separate opt-in switch on the **Memory** page. It stores scoped facts, events,
+summaries and evidence in local SQLite, supports review/correction/forgetting, and works with
+keyword recall without an embedding service. `/memory` manages your own channel profile.
+Both features start disabled. Chat does not execute music controls or tools.
+
+Prompts keep stable history before changing time/retrieval/task data to support DeepSeek's
+prefix cache. The dashboard displays actual cache hit/miss input tokens and output tokens;
+cache availability and hit rate depend on the provider. See the complete
+[AI setup, lifecycle and rollout guide](docs/ai-chat-memory.md).
+
 ## Miao-chan voice music requests (optional)
 
 Use `/join` or `/play` to bring Miao-chan into your voice channel, then speak a command. Voice commands use Chinese; the examples below keep the spoken phrases and explain their meaning in English.
@@ -46,6 +67,19 @@ The bot owner can run **`!update`** to install the latest stable GitHub Release 
 
 The bot stays online while it downloads the ZIP, verifies its SHA-256 checksum and manifest, and installs dependencies into a separate environment. It then saves queues, briefly disconnects, replaces application files, and restarts. `.env`, all existing `config/` files, music assets, user data, logs, and the original environment are preserved. Use `/resume` after restarting to continue a saved queue. New code and its environment are restored to the previous version if configuration checks or Discord startup fail.
 
+With this updater installed, the owner can also use `!update branch:chatbot` to install that
+branch's current commit, or `!update COMMIT_SHA` / `!update commit:COMMIT_SHA` to pin a
+7–40 character Git commit SHA. Branch names and commits always belong to the trusted repository.
+The branch is resolved once, downloaded by its full SHA, and application files are verified
+against its Git tree. These source builds do not require a Release. Bare `!update` always
+selects the latest stable Release, including switching back from a source build at the same version.
+
+Chat and memory **code** update together. Existing memory, chat records, model usage, settings
+and credentials stay local. Before code replacement, AI SQLite databases are backed up under
+`runtime/updates/<job-id>/data-backup/`; declared memory schema mismatches stop the update.
+Rollback restores code and the Python environment while retaining live data. See
+[source update details and first-install requirements](docs/releases.md#source-builds-branches-and-commits).
+
 Run through `start.bat`, the tray, or `python main.py` so the restart supervisor is active. Install v1.1.1 or newer once using the manual instructions above; after that, use `!update`. Versions before v1.1.0 lack the command, and v1.1.0 needs the v1.1.1 download-header fix. Public releases must contain both the Windows ZIP and SHA-256 assets. Private repositories, prereleases and downgrades are not supported. If an update fails, check `logs/update.log` and `runtime/updates/<job-id>/`. Backups are kept there for manual recovery; keep this folder while an update is in progress. Restart the normal launcher to recover an interrupted installation.
 
 Join a voice channel and use `/play` with a song name or URL. Leave the input empty to use your server's default playlist, or resume a saved queue. Use **Add song**, **Pause / Resume**, **Skip**, and **Favorite** on the Discord player. The player displays the original cover image, without a progress bar.
@@ -78,6 +112,8 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 
 | Command | Support | Parameters | Description |
 |---|---|---|---|
+| `chat` | both | `mode: status, observe, on, off` | Show status or configure this channel's AI participation; changes require Manage Server |
+| `memory` | both | `operation, memory_id, text` | List, remember, correct or forget your own channel-scoped memories |
 | `replay` | both | None | Restart the current song |
 | `fair` | both | None | Alternate requesters while preserving each user's order |
 | `dedupe` | both | None | Remove duplicate waiting tracks |
@@ -117,7 +153,7 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `ping` | both | None | Show the bot's Discord latency |
 | `voice` | both | Optional status/on/off/test/quiet | Local voice music commands; on/off requires Manage Server |
 | `sync` | ! | None | Sync global slash commands; bot owner only |
-| `update` | ! | Optional GitHub repository URL | Install the latest stable release and restart; bot owner only |
+| `update` | ! | Optional repository URL, `branch:NAME`, or commit SHA | Install a stable release or pinned source build and restart; bot owner only |
 | `a` | ! | None | Alias for `!sync`; bot owner only |
 | `emoji` | ! | None | Show configured emoji |
 | `add` | ! | `a`, `b` | Add two integers |

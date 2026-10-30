@@ -13,7 +13,7 @@ def bot_python(root=ROOT):
     # Automatic updates select a separate environment. Installing into the
     # original .venv would otherwise leave the running bot without voice deps.
     sys.path.insert(0, str(root))
-    from bot_app.infrastructure.updates import GitHubUpdater
+    from bot_app.features.updates.engine import GitHubUpdater
     venv = root / '.venv' / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
     fallback = str(venv) if venv.is_file() else sys.executable
     return GitHubUpdater(root).selected_python(fallback)
