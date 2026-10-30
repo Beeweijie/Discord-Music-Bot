@@ -286,6 +286,11 @@ class ChatService:
                  'now':datetime.now(ZoneInfo(cfg['timezone'])).isoformat(),
                  'max_reply_characters':cfg['max_reply_chars'],'max_reply_tokens':cfg['reply_max_tokens'],
                  'allow_message_breaks':cfg['reply_burst_enabled'],
+                 'reply_context':{'target_id':target_id,'current_message_id':current.message_id,
+                                  'current_received':True,'current_direct':direct,
+                                  'current_mentions_bot':current.bot_user_id in current.mentioned_user_ids,
+                                  'mention_required':False,'delivery_state':'not_sent','reason':reason,
+                                  'previous_receipt':'unknown','previous_skip_reason':'unknown'},
                  'vision':{'enabled':bool(cfg.get('vision_enabled')),'message_id':current.message_id,
                            'attachments':len(current.images),'status':image_status},
                  'participation':{'style':cfg['participation_style'],'followup':plan.followup,'recent_messages':plan.activity}}
@@ -453,7 +458,7 @@ class ChatService:
         identity['expression_style']=cfg.get('expression_style','natural')
         identity['bot_user_id'] = next((message.bot_user_id for message in reversed(visible) if message.bot_user_id), '')
         identity.update(scope=scope, prompt_version=VERSION)
-        prefix = [{'role': 'system', 'content': COMMON + '\n' + expression_prompt(cfg)
+        prefix = [{'role': 'system', 'content': COMMON + '\nExpression style:\n' + expression_prompt(cfg)
                    + '\nIdentity JSON:\n' + json.dumps(identity, ensure_ascii=False, sort_keys=True)}]
         prefix.extend({'role': 'assistant' if row['role'] == 'assistant' else 'user',
                        'content': json.dumps(row, ensure_ascii=False, sort_keys=True)} for row in rows)

@@ -58,6 +58,7 @@
     "bot_app/features/chat/http.py",
     "bot_app/features/chat/judgement.py",
     "bot_app/features/chat/participation.py",
+    "bot_app/features/chat/prompt_rules.py",
     "bot_app/features/chat/prompts.py",
     "bot_app/features/chat/reply.py",
     "bot_app/features/chat/service.py",

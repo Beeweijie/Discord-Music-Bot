@@ -193,6 +193,27 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.state.send.assert_awaited_once_with('hello','100')
         self.assertEqual(self.state.messages[-1].author_id,'99')
 
+    async def test_unmentioned_reply_receives_actual_admission_and_pending_delivery_state(self):
+        self.state.messages.clear();self.state.messages.append(event(text='接着聊聊'))
+        async def complete(stage,messages,**kwargs):
+            if stage=='chat_judge':
+                return {'a':'r','r':'useful','i':0,'d':0,'t':0}
+            payload=json.loads(messages[-1]['content'].split('\nSupplemental context JSON:\n',1)[1])
+            context=payload['reply_context']
+            self.assertTrue(context['current_received'])
+            self.assertFalse(context['current_mentions_bot'])
+            self.assertFalse(context['current_direct'])
+            self.assertFalse(context['mention_required'])
+            self.assertEqual(context['delivery_state'],'not_sent')
+            self.assertEqual(context['previous_receipt'],'unknown')
+            self.assertEqual(context['previous_skip_reason'],'unknown')
+            self.assertEqual(context['target_id'],'100')
+            self.state.send.assert_not_awaited()
+            return '行，接着聊'
+        self.model.complete.side_effect=complete
+        await self.chat.round(self.scope,self.state,1)
+        self.state.send.assert_awaited_once()
+
     async def test_mentioning_another_bot_only_never_calls_model_or_sends(self):
         self.state.messages.clear(); self.state.messages.append(event(text='<@1366796071304564736>'))
         await self.chat.round(self.scope,self.state,1)
@@ -220,7 +241,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"bot_user_id": "99"',prefix[0]['content'])
         self.assertEqual(json.loads(prefix[1]['content'])['mentioned_user_ids'],['88','77'])
 
-    def test_persona_and_style_examples_do_not_become_channel_history(self):
+    def test_core_persona_does_not_become_channel_history(self):
         core = '你是deepseek，也是蓝色大肥鱼\n你现在是一个喜欢在网上冲浪的群友，你爱怎么说话就怎么说话'
         self.cfg['persona'] = core
         original = [row.context() for row in self.state.messages]
@@ -238,6 +259,8 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.cfg['expression_style']='banter'
         banter=self.chat.model_prefix(self.scope,self.state,self.cfg)
         self.assertNotEqual(natural[0],banter[0])
+        self.assertEqual(natural[0]['content'].split('\nExpression style:\n',1)[0],
+                         banter[0]['content'].split('\nExpression style:\n',1)[0])
         self.assertEqual(natural[1:],banter[1:])
         identity=json.loads(banter[0]['content'].split('\nIdentity JSON:\n',1)[1])
         self.assertEqual(identity['persona'],original)

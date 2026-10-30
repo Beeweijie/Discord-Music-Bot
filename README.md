@@ -40,6 +40,10 @@ or `banter` (natural chat with occasional witty irony and medium-strength mutual
 style. The style guides replies, discovery shares and persona learning while preserving the
 owner's core persona. Banter responds seriously to sincere requests and stops teasing when asked.
 Humor follows context and recent conversation; it is not required on every reply or scheduled randomly.
+Voice profiles live in `bot_app/features/chat/prompts.py`; identity, factual evidence, memory,
+vision, web tools and delivery contracts are kept separately in `prompt_rules.py`. The owner's
+core persona stays in server settings. Casual replies can be a few words; no fixed dialogue examples
+or mandatory punchlines are injected into the voice profile.
 
 **Automatic thinking** enables bounded low/high reasoning only for complex questions or explicit
 requests. Everyday chat and background jobs stay fast. Reasoning tokens are included in output
