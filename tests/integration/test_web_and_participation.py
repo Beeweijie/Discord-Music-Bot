@@ -38,7 +38,8 @@ class ParticipationTests(unittest.TestCase):
     def test_unmentioned_questions_are_considered_without_90_second_cooldown(self):
         plan=participation_plan(self.state,self.cfg,100)
         self.assertEqual(plan.interval,4)
-        self.assertLessEqual(plan.delay,1.2)
+        self.assertGreaterEqual(plan.delay,2)
+        self.assertLessEqual(plan.delay,4)
 
     def test_followups_have_a_shorter_interval(self):
         self.state.last_sent=98; self.state.last_author='3'

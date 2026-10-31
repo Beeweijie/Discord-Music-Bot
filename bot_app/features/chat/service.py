@@ -17,11 +17,14 @@ from bot_app.shared.redaction import contains_secret
 from bot_app.shared.llm.deepseek import BudgetExceeded
 from .settings import for_channel
 from .prompts import COMMON, expression_prompt, VERSION
-from .participation import participation_plan, response_nudge
+from .participation import participation_plan, response_nudge, pending_due
 from .reply import ReplyGenerator
 from .thinking import thinking_plan, ThinkingPlan
 from .judgement import judge_messages, normalize, needs_deep_memory, estimated_tokens, DecisionError
 from .delivery import reply_parts
+from .interaction import InteractionState, interaction_context, remember_exchange
+from .expression_examples import expression_examples
+from .web_presentation import web_presentation
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ class ChannelState:
     send: object = None
     can_send: object = None
     context_anchor: str = ''
+    interaction: InteractionState = field(default_factory=InteractionState)
 
 class ChatService:
     def __init__(self, repository, model, memory, settings_for, web=None, persona=None, vision=None):
@@ -135,10 +139,7 @@ class ChatService:
         try:
             while not self.closing and state.processed < state.sequence and self.allowed(scope):
                 cfg = self.config(scope)
-                plan=participation_plan(state,cfg,time.monotonic())
-                due = min(state.first_pending + cfg['max_wait_seconds'], state.last_pending + plan.delay)
-                if cfg['participation_style']=='active' and not state.messages[-1].direct:
-                    due=max(due,state.last_sent+plan.interval)
+                due=pending_due(state,cfg,time.monotonic())
                 delay = max(0, due - time.monotonic())
                 state.wake.clear()
                 if delay:
@@ -241,6 +242,7 @@ class ChatService:
         await self.call('record', scope, action, reason,
                         {'target_id':target_id,'prompt':VERSION,'config':cfg_revision,'source':decision_source,
                          'reason_source':decision.get('reason_source','local'),'same_member_followup':plan.followup,
+                         'interaction_kind':decision.get('kind','chat'),
                          'visible_messages':len(target_ids),'judge_input_estimate':judge_input})
         if action != 'reply':
             return  # wait is reconsidered only after new input; no timer loop of model calls.
@@ -293,7 +295,11 @@ class ChatService:
                                   'previous_receipt':'unknown','previous_skip_reason':'unknown'},
                  'vision':{'enabled':bool(cfg.get('vision_enabled')),'message_id':current.message_id,
                            'attachments':len(current.images),'status':image_status},
-                 'participation':{'style':cfg['participation_style'],'followup':plan.followup,'recent_messages':plan.activity}}
+                 'participation':{'style':cfg['participation_style'],'followup':plan.followup,'recent_messages':plan.activity},
+                 'interaction':interaction_context(state,cfg,current,decision),
+                 'web_presentation':web_presentation(current.content)}
+        if cfg['web_enabled'] and payload['web_presentation']['explicit_sources']:
+            payload['recent_web_sources']=await self.call('sources',scope)
         if self.persona:
             payload['persona_learning']=await self.persona.guidance(scope)
         try:
@@ -311,8 +317,8 @@ class ChatService:
             return (state.sequence == snapshot and latest_epoch == epoch and self.allowed(scope)
                     and revision(self.config(scope)) == cfg_revision
                     and revision(self.memory.config(scope)) == memory_revision and await state.can_send())
-        async def record_tool(name,status):
-            await self.call('record',scope,'tool',name,{'status':status})
+        async def record_tool(name,status,detail=None):
+            await self.call('record',scope,'tool',name,dict(detail or {},status=status))
         thinking=thinking_plan(current.content,cfg,decision)
         if thinking.effort!='none':
             if hasattr(self.model,'budget') and (await self.model.budget())['remaining_cny']<.1:
@@ -380,6 +386,7 @@ class ChatService:
             await self.call('finish', delivery, 'unknown')
             raise
         await self.call('finish',delivery,'sent' if sent else 'cancelled',sent[-1].message_id if sent else None)
+        remember_exchange(state,current,decision,sent)
         if self.persona and payload.get('persona_learning',{}).get('ask_for_feedback') and any(mark in row.content for row in sent for mark in ('?','？')):
             await self.persona.asked(scope)
 
@@ -459,6 +466,7 @@ class ChatService:
         identity['bot_user_id'] = next((message.bot_user_id for message in reversed(visible) if message.bot_user_id), '')
         identity.update(scope=scope, prompt_version=VERSION)
         prefix = [{'role': 'system', 'content': COMMON + '\nExpression style:\n' + expression_prompt(cfg)
+                   + '\nVoice examples (synthetic, not conversation history):\n' + expression_examples(cfg)
                    + '\nIdentity JSON:\n' + json.dumps(identity, ensure_ascii=False, sort_keys=True)}]
         prefix.extend({'role': 'assistant' if row['role'] == 'assistant' else 'user',
                        'content': json.dumps(row, ensure_ascii=False, sort_keys=True)} for row in rows)
@@ -474,6 +482,7 @@ class ChatService:
             return
         state = self.channels.get(event.scope.key)
         if state:
+            state.interaction=InteractionState()
             state.messages = deque((event if row.message_id == event.message_id else row for row in state.messages), maxlen=100)
             state.sequence += 1
             state.processed = state.sequence
@@ -489,6 +498,7 @@ class ChatService:
             await self.persona.forget(scope,identifier=message_id)
         state = self.channels.get(scope)
         if state:
+            state.interaction=InteractionState()
             state.messages = deque((row for row in state.messages if row.message_id != message_id), maxlen=100)
             state.sequence += 1
             state.processed = state.sequence
@@ -500,6 +510,7 @@ class ChatService:
             self.vision.invalidate(scope)
         state = self.channels.get(scope)
         if state:
+            state.interaction=InteractionState()
             state.sequence += 1
             state.processed = state.sequence
             state.messages.clear()

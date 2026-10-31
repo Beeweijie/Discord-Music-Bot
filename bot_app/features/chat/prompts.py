@@ -1,7 +1,7 @@
 """Small voice profiles; application contracts live in prompt_rules."""
 from .prompt_rules import APPLICATION_RULES
 
-VERSION = "chat-14"
+VERSION = "chat-15"
 COMMON = APPLICATION_RULES
 
 NATURAL_STYLE = """平时就像在群里随手打字，接刚才那句话。

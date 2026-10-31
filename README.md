@@ -42,12 +42,24 @@ owner's core persona. Banter responds seriously to sincere requests and stops te
 Humor follows context and recent conversation; it is not required on every reply or scheduled randomly.
 Voice profiles live in `bot_app/features/chat/prompts.py`; identity, factual evidence, memory,
 vision, web tools and delivery contracts are kept separately in `prompt_rules.py`. The owner's
-core persona stays in server settings. Casual replies can be a few words; no fixed dialogue examples
-or mandatory punchlines are injected into the voice profile.
+core persona stays in server settings. Casual replies can be a few words. Separate synthetic voice
+examples in `expression_examples.py` illustrate ordinary chat, corrections, serious requests and
+occasional teasing; they are system references, never actual history or memories.
 The owner-approved Blue Fish card is stored in `bot_app/features/chat/persona_cards.py` as
 `BLUE_FISH_PERSONA`, with the original two-line identity kept verbatim in `BLUE_FISH_CORE`.
 Use the full card as that server's `persona` setting; it is not enabled for other servers by default.
 Its character, interests and social reactions stay separate from the application contracts.
+
+Active participation gives consecutive messages roughly 4.5 seconds of quiet and clear unfinished
+input up to 7 seconds, with an 8-second batching cap unless a longer configured cap applies.
+Complete direct requests stay quick. The existing small decision also classifies conversational
+intent; no extra per-turn model call is added. `interaction.py` keeps a source-grounded snapshot
+of the previous exchange and pending inputs for at most 15 minutes in the current channel. Edits,
+deletions and context clearing invalidate it; it does not create permanent relationship facts.
+Web lookups in casual conversation normally produce a natural reply without a source list.
+Explicit source requests, news and verification attach one key link (occasionally two when asked).
+Successful public source URLs remain in local decision records; a source follow-up can reuse up to
+three from the same channel within 30 minutes without claiming to have searched again.
 
 **Automatic thinking** enables bounded low/high reasoning only for complex questions or explicit
 requests. Everyday chat and background jobs stay fast. Reasoning tokens are included in output

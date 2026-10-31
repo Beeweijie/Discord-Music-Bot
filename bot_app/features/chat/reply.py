@@ -3,6 +3,7 @@ import json
 import re
 from .prompts import REPLY
 from .thinking import ThinkingPlan
+from .web_presentation import web_presentation, result_sources
 from bot_app.shared.llm.deepseek import ThinkingLimitReached
 
 TOOLS=[{'type':'function','function':{'name':'web_search','description':'Search public web sources when current facts, news, uncertainty or verification require it. Avoid searching for casual chat. Use generic queries without private chat or member identifiers.',
@@ -17,6 +18,7 @@ class ReplyGenerator:
         self.on_web=on_web
 
     async def generate(self,prefix,task,payload,cfg,*,scope,current,still_current,record_tool,thinking=None):
+        payload=dict(payload,web_presentation=web_presentation(current.content))
         messages=prefix+[task(REPLY,payload)]
         thinking=thinking or ThinkingPlan(max_tokens=cfg.get('reply_max_tokens',300))
         options={'scope':scope,'model':cfg['model'],'max_tokens':thinking.max_tokens,
@@ -64,7 +66,7 @@ class ReplyGenerator:
                         raise ValueError('Read only URLs supplied in the current message or returned by web_search.')
                     result=await self.web.execute(name,arguments,scope=scope,daily_limit=cfg['web_daily_calls'])
                     allowed_urls.update(row['url'] for row in result.get('results',[]))
-                    await record_tool(name,'completed')
+                    await record_tool(name,'completed',{'sources':result_sources(result)})
                     if self.on_web:
                         await self.on_web(scope,result)
                 except Exception:

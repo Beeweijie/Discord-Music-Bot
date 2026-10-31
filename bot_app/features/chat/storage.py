@@ -35,6 +35,25 @@ class ChatRepository:
         with self.db() as db:
             return [dict(row) for row in db.execute('SELECT * FROM decisions WHERE scope LIKE ? ORDER BY id DESC LIMIT 100', (scope_prefix + '%',))]
 
+    def sources(self,scope):
+        """A small, channel-scoped citation trail; no queries or fetched bodies."""
+        from .web_presentation import result_sources
+        sources=[]
+        with self.db() as db:
+            rows=db.execute("SELECT detail,created FROM decisions WHERE scope=? AND action='tool' "
+                "AND reason IN ('web_search','read_webpage') AND created>? ORDER BY id DESC LIMIT 6",
+                (scope,time.time()-1800)).fetchall()
+            for row in rows:
+                detail=json.loads(row['detail'])
+                if detail.get('status')!='completed':
+                    continue
+                for source in result_sources({'results':detail.get('sources',[])}):
+                    if source['url'] not in {item['url'] for item in sources}:
+                        sources.append(dict(source,retrieved_at=row['created']))
+                    if len(sources)>=3:
+                        return sources
+        return sources
+
     def allowed(self, scope, hour, day):
         with self.db() as db:
             rows = db.execute("SELECT created FROM deliveries WHERE scope=? AND autonomous=1 AND state IN ('prepared','sending','sent','unknown') AND created>?", (scope, time.time() - 86400)).fetchall()
