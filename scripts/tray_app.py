@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from bot_app.presentation.desktop.tray import TrayApp, main
+from bot_app.host.desktop.tray import TrayApp, main
 
 if __name__ == "__main__":
     main()

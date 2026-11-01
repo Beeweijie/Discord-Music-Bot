@@ -1,99 +1,84 @@
-# Publishing a release
+# Releases and updates
 
-Release ZIPs contain source and Windows launchers. Python and FFmpeg are installed
-on the user's computer by `install.bat`; this is not a standalone executable.
+## Stable version and abandoned experiment
 
-Before publishing, install `requirements.txt` into a clean Python environment and
-run `python -m unittest discover -s tests`. Run `python main.py --check` locally
-when configured; it does not connect to Discord. Do not start another bot against
-an active installation's data.
+v1.3.0 is the latest stable GitHub Release. Its original tag and downloadable assets are
+retained. `main` restores its music behavior while retaining feature-first organization
+and pinned branch/commit updates. The historical Release ZIP predates these source-only
+maintenance changes; install current main source to use the new updater and architecture.
 
-For v1.4.0, use the [release notes](release-notes/v1.4.0.md). Verify an upgrade
-from v1.2.1 with multiple saved channel queues, including a restart after Stop.
-In a test Discord voice channel, verify playback and paused moves from A to B
-and back, controls in the destination, and rejection of controls from a different
-channel. These live voice checks supplement the mocked regression suite.
+v1.4.0 is **abandoned / 废案**. Its tag, notes and assets remain available for reference,
+but the Release is marked as a prerelease and must not be selected by automatic stable
+updates. Optional 海洋 voice control and `playskip` now live on `codex/haiyang-voice`.
+Bot chat and related AI features are absent from both active branches.
 
-Build with `python scripts/build_release.py v1.0.0`. The script uses an explicit
-allowlist and outputs a reproducible ZIP plus its SHA-256 checksum in `dist/`.
-It excludes `.env`, per-server configuration, runtime files, user libraries,
-queues, logs, environments and caches. Test the ZIP after extracting it to a path
-with spaces: run `install.bat`, configure a test token, and check tray startup.
-`install.bat -NoConfigure` supports dependency-only smoke tests without a token.
+## Verification and packaging
 
-Commit the release source, tag it as `vX.Y.Z`, and push the commit and tag. The
-release workflow installs dependencies, runs the suite on Linux and Windows,
-builds the ZIP and uploads both assets to a draft before publishing it. It uses
-`docs/release-notes/<tag>.md` when present. It can also be run manually against
-an existing tag. Failed tests prevent that workflow from publishing assets.
-Never publish files by recursively zipping the working directory.
+Use Python 3.13 and install `requirements.txt`. Run the complete suite:
 
-Voice commands are optional. The release embeds the fixed reply audio in a Python
-module so existing v1.3.0 updater path checks accept the ZIP. Original WAVs and
-`requirements-voice.txt` stay in the source repository; the ZIP includes
-`scripts/install_voice.py` to install dependencies into the selected bot environment.
-ASR and keyword models are downloaded separately and stored under `data/voice-models/`.
-From v1.4.0 onward, update preparation installs the optional dependencies when voice
-commands are enabled. An upgrade using an older updater prepares base dependencies
-only; run the helper after that first upgrade if voice was previously enabled.
-
-## Automatic updates
-
-Starting with v1.1.1, the owner-only prefix command `!update [GitHub repository URL]`
-uses GitHub's latest stable release endpoint. The URL must match the locally
-configured `UPDATE_GITHUB_URL`; the default is this project's public repository.
-Both uploaded assets must exist before an update can begin. An incomplete release
-is rejected and can be retried after publishing finishes.
-
-`version.json` records a stable version and `update_schema: 1`. The builder fills
-its public file manifest from the distribution allowlist and stamps the actual
-tag. Keep this schema compatible with the existing supervisor. Updates never
-write `.env`, `config/`, `assets/`, `data/` or the original `.venv`. They replace
-only allowed application files and remove obsolete files from the previous
-release manifest. Locally modified application code is backed up and replaced.
-
-Preparation verifies archive/checksum/API digest, paths, file counts and size,
-creates a separate dependency environment, and smoke-imports the new code while
-the existing bot stays online. Once the owner receives the restart message, the
-bot saves its queues and exits with code 75. The supervisor holds a separate
-installation lock, backs up application files, persists a rollback journal,
-replaces code, checks configuration, and launches the candidate environment.
-The candidate must connect to Discord and mark ready within 90 seconds. Only
-then does the supervisor commit and arrange a completion message in the request
-channel. Saved queues require explicit `/resume` after restart.
-
-A failed configuration check, early exit or readiness timeout restores code and
-the previous environment pointer. A crash during replacement is repaired on the
-next normal launch, using a standalone copy of the previously working updater.
-Recovery journals, environments and backups remain in `runtime/updates/<id>/`.
-Do not remove that directory while an update is pending. Details are in
-`logs/update.log`, `prepare.log` and `check.log` within the job folder. Dependency
-installation has a ten-minute timeout. Failed downloads/preparation never stop
-the running bot. Upgrading a release older than v1.1.1 requires a manual install
-once so the supervisor, command and binary download-header fix are available.
-
-## Linux updates failing before code replacement
-
-Versions through v1.2.0 can reject a normal Linux virtual environment with
-`The prepared Python environment is missing or outside the update directory.`
-The executable `environment/bin/python` is normally a symbolic link to system
-Python. The old check resolves that final link and incorrectly treats the system
-interpreter as an escaping update path. v1.2.1 resolves only the containing
-directory, keeps the venv launch path, and still rejects missing executables and
-directories that point outside the update storage.
-
-An affected old updater fails before installing the fix, so retrying `!update`
-alone cannot repair it. Stop the bot's usual launcher/service, then run this
-one-time repair in the existing installation (replace the root path as needed):
-
-```bash
-curl -fL https://raw.githubusercontent.com/Beeweijie/Discord-Music-Bot/v1.2.1/scripts/fix_linux_update.py -o /tmp/fix_linux_update.py
-python3 /tmp/fix_linux_update.py --root /home/hche616/Discord-Music-Bot
+```text
+python -m unittest discover -s tests -v
+python main.py --check
+python scripts/build_release.py v1.3.0
 ```
 
-The helper refuses a running launcher or an unexpected updater, backs up the
-original source, and changes only the faulty path check. It does not remove update
-environments or edit credentials, settings or saved queues. Restart the same
-launcher/service, then use `!update` to install the fixed release. Use `/resume`
-after a successful upgrade. Future releases must pass real Linux venv/update and
-rollback tests as well as the Windows release suite before assets are published.
+`--check` validates local configuration and FFmpeg without logging in to Discord. Do not
+start a second bot against an active installation's data. Tests cover command registration,
+music, queue recovery, management, desktop control, welcome, polls, archive validation,
+real supervisor restarts and rollback. GitHub CI runs the full suite on Linux and Windows.
+The voice branch additionally runs before and after installing optional voice dependencies.
+Real Discord audio and microphone recognition require separate live checks.
+
+The builder uses an explicit public-file allowlist and produces a deterministic ZIP and
+SHA-256 checksum under `dist/`. Credentials, per-server settings, data, runtime files, logs,
+environments, caches and development artifacts are excluded. Do not recursively zip the
+working directory. Source manifests and packaged manifests list their actual public files.
+
+## Release updates
+
+The owner-only `!update` command selects the trusted repository's latest stable Release.
+`UPDATE_GITHUB_URL` defaults to this project. A supplied repository URL must match that
+configured repository. A prerelease or incomplete ZIP/checksum upload is rejected.
+
+Preparation verifies checksum/API digest, manifest, paths, size and file counts before
+installing dependencies in a separate environment. It does not stop the running bot until
+preparation succeeds. Queues are saved before the supervised restart. The candidate must
+pass configuration checks and become ready within 90 seconds; otherwise the previous code
+and environment are restored. Saved queues require `/resume` after restart.
+
+The updater accepts old layer-based packages and current feature packages. It removes
+obsolete application files recorded by the prior manifest. `.env`, `config/`, `assets/`,
+`data/`, the original `.venv` and runtime recovery records are protected from replacement.
+Retired chat data is left untouched and is not opened by this version.
+
+Preparation, check and recovery logs remain in `runtime/updates/<job-id>/` and
+`logs/update.log`. Do not remove a pending update directory. A crash during replacement
+is repaired on the next normal launch using the standalone recovery helper.
+
+## Pinned source updates
+
+Install current main source once if upgrading from the original v1.3.0 Release, whose
+updater understands Releases only. Then the owner can use:
+
+```text
+!update                              latest stable Release
+!update branch:main                  current maintained stable source
+!update branch:codex/haiyang-voice    optional voice experiment
+!update COMMIT_SHA                    7–40 hexadecimal characters
+!update commit:COMMIT_SHA             explicit pinned commit
+```
+
+A branch is resolved once to a full immutable SHA. The updater downloads that commit's
+archive and verifies each selected application file against its Git blob hash. Truncated
+trees, missing updater/launcher files, unsupported protocols, content changes, links,
+traversal, duplicate paths and oversized archives are rejected before activation.
+
+The installed manifest records `source.kind`, `source.ref`, `source.commit` and
+`source.repository`. Messages include the short SHA. Installing the same commit is a
+no-op; readiness requires the exact staged SHA. Selecting an older commit is an explicit
+source rollback. Source updates use the same staging, supervisor and rollback as Releases.
+
+Bare `!update` returns a source installation to the latest stable Release at the same
+base version. It does not track the selected branch and does not automatically downgrade
+an installed v1.4.0 Release; migrate that version manually or select current main using a
+source-capable updater. Returning to the historical v1.3.0 ZIP also restores its older updater.

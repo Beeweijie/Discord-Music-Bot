@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dotenv import load_dotenv
-from bot_app.infrastructure.paths import BASE_DIR
+from bot_app.shared.paths import BASE_DIR
 
 
 def main():

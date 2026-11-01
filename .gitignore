@@ -13,5 +13,9 @@ data/polls/
 data/library/
 data/voice-models/
 config/guilds/
+data/ai/
+data/chat/
+data/memory/
+.artifacts/
 dist/
 .idea/

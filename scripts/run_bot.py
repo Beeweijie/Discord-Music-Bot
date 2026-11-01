@@ -59,7 +59,7 @@ def load_updater(root):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module.GitHubUpdater(root)
-    from bot_app.infrastructure.updates import GitHubUpdater
+    from bot_app.features.updates.engine import GitHubUpdater
     return GitHubUpdater(root)
 
 
