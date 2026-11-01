@@ -1,9 +1,37 @@
-# Discord Music Bot
+# Discord Music Bot — 海洋 voice experiment
 
-Stable Release: **v1.3.0**. `main` retains feature-first architecture and branch/commit
-updates. v1.4.0 is retained as an **abandoned / 废案** prerelease. Optional 海洋 voice
-control and `playskip` live on [`codex/haiyang-voice`](https://github.com/Beeweijie/Discord-Music-Bot/tree/codex/haiyang-voice).
-Bot chat and related AI features have been removed. See [releases and source updates](docs/releases.md).
+This is `codex/haiyang-voice`, an optional experiment based on stable v1.3.0.
+It retains feature-first architecture and branch/commit updates, and contains no bot chat
+or AI memory features. v1.4.0 is retained as an **abandoned / 废案** prerelease.
+Use `main` or the v1.3.0 Release for stable music behavior. See [release policy](docs/releases.md).
+
+
+## Miao-chan voice music requests (optional)
+
+Use `/join` or `/play` to bring Miao-chan into your voice channel, then speak a command. Voice commands use Chinese; the examples below keep the spoken phrases and explain their meaning in English.
+
+- **喵酱喵酱，下一首歌** (“Miao-chan, Miao-chan, next song”): skip the current track.
+- **喵酱喵酱，播放周杰伦的晴天** (“Miao-chan, Miao-chan, play Qing Tian by Jay Chou”): infer the song title, search for it, add it to the front, and switch to it immediately while preserving the rest of the queue.
+- **喵酱喵酱，加入雨爱吧** (“Miao-chan, Miao-chan, add Yu Ai”): add the song to the end without interrupting playback. When idle, this only queues the song; say “播放” (“play”) or “继续播放” (“resume playback”) to start.
+- **喵酱喵酱，暂停播放 / 继续播放** (“Miao-chan, Miao-chan, pause / resume playback”).
+
+You can also say just “喵酱喵酱”, wait for the Klee-style “我在喵” (“I'm here, meow”) reply to finish, then give a command within 8 seconds. If the command is unclear, the bot asks you aloud to repeat it; a timeout ends the listening session. During music playback, the bot briefly lowers the music volume and restores it after replying. Replies while paused do not advance the music's playback position. See [Voice replies](docs/voice-replies.md) for the mechanism and voice sources. Audio from other bots is ignored, and the speaker must still be in Miao-chan's voice channel. Recognized commands appear in the text channel most recently used for music commands. Headphones help prevent music from feeding back through your microphone.
+
+Wake detection combines phonetic detection with text matching, so homophones in the transcript do not prevent “喵酱” from being recognized. If a pause splits the two repetitions into separate segments, they can be joined within 3 seconds. Common polite phrases such as “喵酱喵酱，请帮我下一首歌吧” (“Miao-chan, Miao-chan, please skip to the next song”) are supported. If the wake phrase is detected but the following command is unclear, the bot prompts you aloud and lets you try the command again.
+
+Spoken “播放某首歌” (“play a song”) uses `playskip`: it adds the song to the front and immediately skips the current track. “加入某首歌” (“add a song”) and “加入列表某首歌” (“add a song to the queue”) only append it. Song-title matching uses pinyin suggestions, common songs, the server's current queue and history, and your own favorites and playlists; for example, “与爱” can be corrected to “雨爱” (Yu Ai). Search compares multiple music results and gives unrelated lectures and short videos lower priority. Corrected search terms appear in the text channel. If the match is uncertain, the bot offers up to three candidates. Within 30 seconds, say “第一个”, “第二个”, or “第三个” (“the first”, “the second”, or “the third”), or say “取消” (“cancel”).
+
+Use `/voice status` or `!voice` to check the status. Saying “闭嘴”, “取消”, or “安静” (“be quiet”, “cancel”, or “quiet”) ends your own listening session and candidate selection while music keeps playing. Text alternatives are `!voice quiet` and `/voice quiet`. Saying “喵酱喵酱” again clears the previous candidates, cancels the previous search, and starts a new command. Each wake session gives at most one “I didn't catch that” prompt; listening timeouts end silently. “播放歌单／列表／队列” (“play the playlist / list / queue”) starts the existing queue. Members with **Manage Server** permission can temporarily disable or enable voice commands for the server with `/voice off` and `/voice on`; restarting restores the default. To disable voice commands globally, set `VOICE_COMMANDS_ENABLED=false` in `.env` and restart.
+
+For troubleshooting, use `!voice test` or `/voice test`. For the next 30 seconds, it accepts up to 3 test segments from the person who started the test, displaying the recognized text, phonetic wake-detection result, and audio-level metrics without saving recordings. Prefix-command diagnostics appear in the current channel; slash-command diagnostics are visible only to the person who invoked them. Ordinary recognition results and other members' transcripts are not shown as diagnostic output.
+
+To install, run `python scripts/install_voice.py` from the project root. The installer selects the update environment currently used by the bot, or `.venv`. Download the [SenseVoice int8 model](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2), extract it into `data/voice-models/`, set `VOICE_COMMANDS_ENABLED=true`, and restart. The model directory must contain `model.int8.onnx` and `tokens.txt`; use `VOICE_MODEL_PATH` for a different location. Chinese commands use `VOICE_ASR_LANGUAGE=zh`, with two CPU threads for inference. This feature requires discord.py 2.7.1 and DAVE support. For source checkouts, you can also install `requirements-voice.txt` in the bot's Python environment; for Release ZIPs, use the installer above. Models must be downloaded separately. Regular music playback does not require the voice dependencies.
+
+For more reliable wake detection, also download the [Chinese phonetic wake-word model](https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2) and extract it into `data/voice-models/`. You can specify a different directory with `VOICE_WAKE_MODEL_PATH`. Without this model, transcript-based wake matching still works. A status of `wake_detector=phonetic` means phonetic detection is enabled. The additional model is about 31 MiB and uses one CPU thread.
+
+Linux also requires the system Opus library. On Debian, Ubuntu, or Raspberry Pi OS, run `sudo apt-get install libopus0`. If a native codec library is missing, the voice status displays an error and the logs provide details. Regular music playback continues through its existing workflow.
+
+Audio is recognized in segments held locally in the Raspberry Pi's memory. Each segment is at most 12 seconds long, the queue holds at most 6 segments, and pending results older than 8 seconds are discarded. No cloud speech API is used, and neither recordings nor ordinary conversation transcripts are saved. Song requests and control feedback in the server use the existing music workflow. The `voice_commands` field in `runtime/status.json` provides receive, decode, and command counters for troubleshooting. Only audio from people in the bot's voice channel can be recognized; you cannot summon the bot by voice before it has joined a channel.
 
 ## Quick Windows setup
 
@@ -29,6 +57,8 @@ Run through `start.bat`, the tray, or `python main.py` so the restart supervisor
 Join a voice channel and use `/play` with a song name or URL. Leave the input empty to use your server's default playlist, or resume a saved queue. Use **Add song**, **Pause / Resume**, **Skip**, and **Favorite** on the Discord player. The player displays the original cover image, without a progress bar.
 
 Use `/playtop input:song name or URL` or `!playtop song name or URL` to add music to the front of the waiting queue. The current track keeps playing, and paused playback stays paused. When idle, playback starts from the new track. Input is required; local MP3s and autocomplete work like `/play`. Playlists and collections are inserted as a block in their original order, subject to the existing duplicate and size limits. `/playtop` shares `/play`'s cooldown. To move a track already in the queue, use `/nextup index`.
+
+Use `/playskip input:song name or URL` or `!playskip song name or URL` for **play → move to front → skip**. It resolves and queues the requested track or playlist first, then skips the current track. A failed search does not interrupt playback. Playlists keep their insertion order, the remaining queue is preserved, and a paused track is skipped too. When idle, the requested track starts once. Input and autocomplete work like `/playtop`.
 
 The default playlist import limit and waiting queue capacity are both 1000 tracks. Each server can adjust these limits in the dashboard.
 
@@ -76,6 +106,7 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `poll_end` | both | `message` | End a poll early using a message link or an ID from this channel; creator or administrator only |
 | `play` | both | `input` | Play local MP3s, YouTube/Bilibili links, playlists or collections, or search keywords; `/play` supports autocomplete |
 | `playtop` | both | `input` (required) | Add a song or playlist to the front of the waiting queue without interrupting playback; supports autocomplete |
+| `playskip` | both | `input` (required) | Add a song or playlist to the front and skip the current track; supports autocomplete |
 | `queue` | both | None | Show this server's queue |
 | `pause` | both | None | Pause playback |
 | `resume` | both | None | Resume playback |
@@ -90,6 +121,7 @@ See [the maintenance guide](docs/music-maintenance.md) for code ownership, stora
 | `loop` | both | `mode` | Set repeat mode: off, one track, or the queue |
 | `help_music` | both | None | Show music command help |
 | `ping` | both | None | Show the bot's Discord latency |
+| `voice` | both | Optional status/on/off/test/quiet | Local voice music commands; on/off requires Manage Server |
 | `sync` | ! | None | Sync global slash commands; bot owner only |
 | `update` | ! | Optional GitHub repository URL | Install the latest stable release and restart; bot owner only |
 | `a` | ! | None | Alias for `!sync`; bot owner only |

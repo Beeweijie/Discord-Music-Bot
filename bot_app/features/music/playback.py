@@ -115,7 +115,8 @@ class PlaybackOperations:
                 session.vc = guild_vc
             elif not session.vc:
                 try:
-                    session.vc = await channel.connect(timeout=20, reconnect=True)
+                    session.vc = await channel.connect(timeout=20, reconnect=True,
+                        **getattr(self, "voice_connection_options", {}))
                 except Exception as error:
                     logger.warning("Voice connection failed", exc_info=True,
                         extra={"guild_id": ctx.guild.id, "channel_id": channel.id})
@@ -231,7 +232,7 @@ class PlaybackOperations:
 
         async with session.play_lock:
             while True:
-                if session.stopped or session.sleeping:
+                if session.stopped or session.sleeping or session.queue_waiting:
                     return
 
                 self._cleanup_dead_vc(session)

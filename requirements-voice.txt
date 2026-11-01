@@ -1,0 +1,6 @@
+# Optional local voice commands; install in the same environment as the bot.
+discord.py[voice]==2.7.1
+discord-ext-voice-recv==0.5.2a179
+sherpa-onnx==2.0.1
+numpy>=2,<3
+pypinyin==0.55.0

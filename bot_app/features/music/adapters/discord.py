@@ -11,6 +11,8 @@ from bot_app.features.music.adapters.panels import InteractionContext
 class Music(commands.Cog):
     def __init__(self, bot):
         self.service = bot.factories.music()
+        from bot_app.features.music.api import MusicAPI
+        self.api = MusicAPI(self.service)
 
     async def cog_unload(self):
         await self.service.close()
@@ -70,6 +72,11 @@ class Music(commands.Cog):
     async def playtop_prefix(self, ctx, *, input: str):
         """Add a song or playlist to the front without interrupting playback."""
         await self.service.dispatch('playtop', ctx, input)
+
+    @commands.command(name="playskip")
+    async def playskip_prefix(self, ctx, *, input: str):
+        """Add a song/playlist to the front, then skip the current track."""
+        await self.service.dispatch('playskip', ctx, input)
 
 
     @commands.command(name="playlist_defult")
@@ -178,6 +185,12 @@ class Music(commands.Cog):
     @app_commands.autocomplete(input=play_input_autocomplete)
     async def playtop_slash(self, interaction: discord.Interaction, input: str):
         await self._run_slash(interaction, 'playtop', input)
+
+    @app_commands.command(name="playskip", description="Play a song or playlist next immediately, skipping the current track")
+    @app_commands.describe(input="Song name, URL, playlist or local MP3 to play immediately")
+    @app_commands.autocomplete(input=play_input_autocomplete)
+    async def playskip_slash(self, interaction: discord.Interaction, input: str):
+        await self._run_slash(interaction, 'playskip', input)
 
 
     @app_commands.command(name="queue", description="View the queue in your voice channel")

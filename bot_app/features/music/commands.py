@@ -27,7 +27,7 @@ class CommandsOperations:
         await ctx.send(f"✅ Connected to **{channel.name}**.")
 
 
-    async def _queue_collection_input(self, ctx, input: str, channel, session, *, front: bool = False):
+    async def _queue_collection_input(self, ctx, input: str, channel, session, *, front: bool = False, start: bool = True):
         """Queue a playlist/collection through the unified play command."""
         try:
             songs = await self.run_media(
@@ -57,8 +57,8 @@ class CommandsOperations:
                 deduped_count = len(songs)
                 if len(songs) > self.settings_for(ctx.guild.id)['max_playlist_songs']:
                     limit = self.settings_for(ctx.guild.id)['max_playlist_songs']
-                    songs = songs[:limit] if front else random.sample(songs, limit)
-                elif len(songs) > 1 and not front:
+                    songs = songs[:limit] if front or not start else random.sample(songs, limit)
+                elif len(songs) > 1 and not front and start:
                     random.shuffle(songs)
 
                 remaining_slots = self.settings_for(ctx.guild.id)['max_queue_size'] - len(session.queue)
@@ -77,6 +77,8 @@ class CommandsOperations:
                     session.queue[0:0] = songs
                 else:
                     session.queue.extend(songs)
+                if not start and not (session.vc and (session.vc.is_playing() or session.vc.is_paused())):
+                    session.queue_waiting = True
                 queue_size = len(session.queue)
 
             self._log_session(
@@ -100,7 +102,7 @@ class CommandsOperations:
                 if original_count != deduped_count:
                     extras.append(f"{original_count - deduped_count} duplicates removed")
                 if deduped_count > self.settings_for(ctx.guild.id)['max_playlist_songs']:
-                    selection = "selected the first" if front else "randomly selected"
+                    selection = "selected the first" if front or not start else "randomly selected"
                     extras.append(f"{selection} {self.settings_for(ctx.guild.id)['max_playlist_songs']} tracks")
                 if limited_by_queue:
                     extras.append(f"capped at {self.settings_for(ctx.guild.id)['max_queue_size']} queued tracks")
@@ -114,8 +116,9 @@ class CommandsOperations:
 
             self._start_predownload_task(self._channel_key(channel))
 
-            if not vc.is_playing() and not vc.is_paused():
+            if start and not vc.is_playing() and not vc.is_paused():
                 await self.play_next(self._channel_key(channel))
+            return songs
 
         except Exception as e:
             logger.warning("Playlist load failed", exc_info=True,
@@ -131,7 +134,58 @@ class CommandsOperations:
         await self._play_impl(ctx, input, front=True)
 
 
-    async def _play_impl(self, ctx, input: str | None = None, *, front: bool = False):
+    async def _enqueue_impl(self, ctx, input: str):
+        return await self._play_impl(ctx, input, start=False)
+
+    async def _playqueue_impl(self, ctx):
+        session = self._get_existing_session(ctx)
+        if session and session.vc and session.vc.is_playing():
+            await ctx.send('🐱 当前歌单正在播放。')
+            return
+        if session and (session.queue or (session.vc and session.vc.is_paused())):
+            async with session.control_lock:
+                return await self._resume_impl(ctx)
+        return await self._play_impl(ctx)
+
+    async def _playnow_impl(self, ctx, input: str):
+        return await self._playskip_impl(ctx, input)
+
+    async def _playskip_impl(self, ctx, input: str):
+        if not (input or '').strip():
+            await ctx.send("Provide a song name or URL to play next immediately.")
+            return
+        added = await self._play_impl(ctx, input, front=True)
+        if added is None:
+            return
+        tracks = added if isinstance(added, list) else [added]
+        if not tracks:
+            return
+        target = tracks[0]
+        session = self._get_existing_session(ctx)
+        if not session or session.stopped or session.current_song is target:
+            return
+        async with session.control_lock:
+            if self.sessions.get(self._session_status_key(session)) is not session or session.stopped:
+                return
+            async with session.queue_lock:
+                if not any(item is target for item in session.queue):
+                    return
+                targets = {id(item) for item in tracks}
+                front = [item for item in tracks if any(queued is item for queued in session.queue)]
+                session.queue[:] = front + [item for item in session.queue if id(item) not in targets]
+            session.queue_waiting = session.sleeping = False
+            if session.preparing_song and session.preparing_song is not target:
+                session.preparing_song.cancelled = True
+                session.preparing_song.cancel_event.set()
+                return  # Its play_next loop will continue with the new front.
+            if session.vc and (session.vc.is_playing() or session.vc.is_paused()):
+                if session.current_song:
+                    session.current_song.suppress_repeat = True
+                session.vc.stop()
+            else:
+                self._spawn(self.play_next(self._session_status_key(session)))
+
+    async def _play_impl(self, ctx, input: str | None = None, *, front: bool = False, start: bool = True):
         """添加歌曲到队列；未提供输入时使用默认歌单。"""
         channel = self._get_user_voice_channel(ctx)
         if not channel:
@@ -157,6 +211,8 @@ class CommandsOperations:
         self._touch_session(session, ctx, channel)
         session.last_text_channel_id = ctx.channel.id
         session.stopped = False
+        if start:
+            session.queue_waiting = False
 
         if len(session.queue) >= self.settings_for(ctx.guild.id)['max_queue_size']:
             await ctx.send(f"Queue full (limit: {self.settings_for(ctx.guild.id)['max_queue_size']} tracks).")
@@ -166,12 +222,10 @@ class CommandsOperations:
             if self._is_youtube_radio_url(input):
                 input = self._normalize_youtube_watch_url(input)
             elif self._is_youtube_playlist_like_url(input):
-                await self._queue_collection_input(ctx, input, channel, session, front=front)
-                return
+                return await self._queue_collection_input(ctx, input, channel, session, front=front, start=start)
 
         if is_bilibili_url(input):
-            await self._queue_collection_input(ctx, input, channel, session, front=front)
-            return
+            return await self._queue_collection_input(ctx, input, channel, session, front=front, start=start)
 
         if not is_valid_url(input) and not self._local_music_exists(input):
             await ctx.send(f"🔎 Searching YouTube for {input[:150]}...")
@@ -203,6 +257,8 @@ class CommandsOperations:
                 session.queue.insert(0, song)
             else:
                 session.queue.append(song)
+            if not start and not (session.vc and (session.vc.is_playing() or session.vc.is_paused())):
+                session.queue_waiting = True
             queue_size = len(session.queue)
 
         self._log_session(
@@ -224,8 +280,9 @@ class CommandsOperations:
 
         self._start_predownload_task(self._channel_key(channel))
 
-        if not vc.is_playing() and not vc.is_paused():
+        if start and not vc.is_playing() and not vc.is_paused():
             await self.play_next(self._channel_key(channel))
+        return song
 
 
     async def _queue_impl(self, ctx, page: int = 1):
@@ -258,6 +315,8 @@ class CommandsOperations:
 
     async def _resume_impl(self, ctx):
         session = self._require_session(ctx)
+        if session:
+            session.queue_waiting = False
         if session.queue and (session.restored or not session.vc or not session.vc.is_connected()):
             await self._continue_saved(ctx, session)
             return

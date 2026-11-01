@@ -1,10 +1,8 @@
 import asyncio
 import threading
 import time
-from dataclasses import dataclass
-from dataclasses import field
-from typing import List
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
 from bot_app.features.music.track import Song as Track
 from bot_app.features.music.policies import DEFAULT_VOLUME
 from bot_app.features.music.ports import VoiceConnection
@@ -59,4 +57,5 @@ class ChannelSession:
     sleep_until: Optional[float] = None
     sleeping: bool = False
     paused_since: Optional[float] = None
+    queue_waiting: bool = False
     retiring: bool = False
